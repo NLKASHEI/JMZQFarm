@@ -1,4 +1,5 @@
 node_modules/
+tests/.artifacts/
 tests/.deps/
 .DS_Store
 *.log

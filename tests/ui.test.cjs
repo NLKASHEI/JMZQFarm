@@ -55,13 +55,35 @@ test('MVU解析时拒绝装箱，确认前切换聊天也不写入',async t=>{
 });
 test('所有功能页可渲染，值守设置保存前不生效',async t=>{
   const env=await setup(t);
-  for(const page of ['farm','ranch','fish','explore','workshop','journal','idle','bag']){env.click('[data-tab="'+page+'"]');assert.ok(env.root.querySelector('main').textContent.length>50);}
+  for(const page of ['farm','ranch','fish','explore','workshop','journal','achievements','idle','bag']){env.click('[data-tab="'+page+'"]');assert.ok(env.root.querySelector('main').textContent.length>50);}
   env.click('[data-tab="overview"]');env.click('[data-do="demo-supplies"]');await until(async()=>(await env.read()).level===10);
   env.click('[data-tab="idle"]');env.click('[data-do="build-idle"]');await until(()=>env.root.querySelector('[data-idle="enabled"]'));
   env.root.querySelector('[data-idle="enabled"]').checked=true;
   assert.equal((await env.read()).idle.enabled,false);env.click('[data-do="save-idle"]');await until(async()=>(await env.read()).idle.enabled);
   assert.equal((await env.read()).idle.sellSurplus,false);
 });
+test('成就筛选分页与选中同步，领奖仅入小院；领取后空页不崩溃',async t=>{
+  const env=await setup(t);env.click('[data-tab="achievements"]');
+  assert.equal(env.root.querySelectorAll('.achievement-card').length,6);
+  env.click('[data-do="achievement-page"][data-index="1"]');
+  assert.equal(env.root.querySelector('.achievement-pagination span').textContent,'2 / 6 页');
+  const second=env.root.querySelectorAll('.achievement-card')[1];env.click('[data-do="select-achievement"][data-id="'+second.dataset.id+'"]');
+  assert.equal(env.root.querySelector('.achievement-detail').dataset.achievement,second.dataset.id);
+  env.click('[data-ui="theme"]');await until(()=>env.root.querySelector('.garden.light'));
+  assert.equal(env.root.querySelector('.achievement-detail').dataset.achievement,second.dataset.id);
+  env.click('[data-do="achievement-filter"][data-id="fish"]');
+  assert.equal(env.root.querySelector('.achievement-pagination span').textContent,'1 / 2 页');
+  env.click('[data-do="achievement-filter"][data-id="ready"]');assert.equal(env.root.querySelectorAll('.achievement-card').length,0);
+  env.click('[data-tab="overview"]');env.click('[data-do="demo-supplies"]');await until(async()=>(await env.read()).level===10);
+  env.click('[data-tab="achievements"]');assert.equal(env.root.querySelector('[data-do="milestone"]').dataset.id,'collector');
+  const before=await env.read(),vars=structuredClone(env.variables());env.click('[data-do="milestone"]');
+  await until(async()=>(await env.read()).claimedMilestones.includes('collector'));
+  await until(()=>!env.root.querySelector('[data-do="milestone"]'));
+  assert.equal((await env.read()).coins,before.coins+220);assert.deepEqual(env.variables(),vars);
+  env.click('[data-do="achievement-filter"][data-id="home"]');env.click('[data-do="select-achievement"][data-id="collector"]');
+  assert.equal(env.root.querySelector('[data-do="milestone"]').disabled,true);
+});
+
 test('长按与释放驱动追鱼，暂停不丢失进度且不继续下坠',async t=>{
   const env=await setup(t);env.click('[data-tab="fish"]');env.click('[data-do="cast"]');
   await until(async()=>!!(await env.read()).fishing);

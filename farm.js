@@ -1,10 +1,10 @@
-/* 缄默之秋 · 小农场 4.2.0
+/* 缄默之秋 · 小农场 4.3.0
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.2.0';
+  const VERSION = '4.3.0';
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -146,7 +146,43 @@
     {id:'new_world',name:'地图之外',desc:'发现8处特殊地点',value:s=>s.discoveries.length,target:8,coins:300,items:{'便携收音机':1}},
     {id:'fish_master',name:'水域博物志',desc:'收集全部11种鱼',value:s=>FISH.filter(f=>s.collection[f.name]).length,target:11,coins:500,items:{'便携滤水器':1}},
     {id:'treasure_3',name:'钓线另一端',desc:'成功带回3只水下宝箱',value:s=>s.fishBook.chests,target:3,coins:120,items:{'旧数据片':2}},
+    {id:'harvest_25',name:'菜篮渐满',desc:'累计收获25份作物',value:s=>s.stats.harvest,target:25,coins:60,items:{'温室营养液':1}},
+    {id:'harvest_500',name:'四季粮仓',desc:'累计收获500份作物',value:s=>s.stats.harvest,target:500,coins:400,items:{'蔬菜干':4,'温室营养液':3}},
+    {id:'crop_catalog',name:'十二畦的颜色',desc:'图鉴记录全部12种作物',value:s=>CROPS.filter(c=>s.collection[c.name]).length,target:12,coins:240,items:{'温室营养液':3,'净水':3}},
+    {id:'ranch_1',name:'清晨的馈赠',desc:'取得第一份畜牧产物',value:s=>s.stats.ranch,target:1,coins:30,items:{'高能精饲料':1}},
+    {id:'ranch_100',name:'围栏里的日常',desc:'累计取得100份畜牧产物',value:s=>s.stats.ranch,target:100,coins:240,items:{'布料':4,'高能精饲料':2}},
+    {id:'ranch_300',name:'丰饶牧场',desc:'累计取得300份畜牧产物',value:s=>s.stats.ranch,target:300,coins:420,items:{'咸香蛋饼':4,'高能精饲料':3}},
+    {id:'fish_1',name:'浮标第一次下沉',desc:'成功钓到第一条鱼',value:s=>s.stats.fish,target:1,coins:30,items:{'闪光拟饵':1}},
+    {id:'fish_100',name:'百尾归篓',desc:'成功钓到100条鱼',value:s=>s.stats.fish,target:100,coins:340,items:{'鱼肉干':4,'闪光拟饵':3}},
+    {id:'perfect_1',name:'稳稳收线',desc:'完成一次完美垂钓',value:s=>s.fishBook.perfect,target:1,coins:70,items:{'闪光拟饵':2}},
+    {id:'perfect_10',name:'水面无声',desc:'累计完成10次完美垂钓',value:s=>s.fishBook.perfect,target:10,coins:260,items:{'闪光拟饵':4,'旧数据片':1}},
+    {id:'heavy_fish',name:'沉甸甸的一竿',desc:'钓到一条至少4公斤的鱼',value:s=>s.fishBook.heaviest?.weight||0,target:4,unit:'公斤',coins:220,items:{'雨布挎包':1,'闪光拟饵':2}},
+    {id:'explore_1',name:'推开院门',desc:'完成第一次探索',value:s=>s.stats.explore,target:1,coins:35,items:{'探路干粮':1}},
+    {id:'explore_5',name:'熟悉的小径',desc:'累计完成5次探索',value:s=>s.stats.explore,target:5,coins:70,items:{'探索急救包':1,'简易敷料':1}},
+    {id:'explore_60',name:'旧路新生',desc:'累计完成60次探索',value:s=>s.stats.explore,target:60,coins:400,items:{'探索急救包':3,'电池':3}},
+    {id:'discovery_all',name:'余烬地图',desc:'记录全部12处特殊地点',value:s=>s.discoveries.length,target:12,coins:450,items:{'便携滤水器':1,'探路干粮':2}},
+    {id:'craft_1',name:'第一件手作',desc:'完成第一次工坊制作',value:s=>s.stats.craft,target:1,coins:30,items:{'废铁':2}},
+    {id:'craft_50',name:'炉火不息',desc:'累计完成50次制作',value:s=>s.stats.craft,target:50,coins:280,items:{'电子元件':4,'布料':4}},
+    {id:'craft_150',name:'万物皆可修补',desc:'累计完成150次制作',value:s=>s.stats.craft,target:150,coins:480,items:{'便携收音机':1,'电池':3}},
+    {id:'level_15',name:'小院长成',desc:'小院达到15级',value:s=>s.level,target:15,coins:320,items:{'雨布挎包':1,'简易敷料':3}},
+    {id:'projects_3',name:'守望相助',desc:'完成全部3期公共交付',value:s=>s.projects.length,target:3,coins:350,items:{'荒野炖锅':3,'净水':4}},
+    {id:'idle_home',name:'有人照看的家',desc:'建成离线值守岗',value:s=>Number(s.idle.built),target:1,coins:50,items:{'温室营养液':1,'高能精饲料':1}},
   ];
+  const ACHIEVEMENT_CATEGORIES = [
+    {id:'farm',name:'种植',medal:0,goals:['first_harvest','harvest_25','harvest_100','crop_catalog','harvest_500']},
+    {id:'ranch',name:'牧场',medal:1,goals:['ranch_1','ranch_30','ranch_100','ranch_300']},
+    {id:'fish',name:'垂钓',medal:2,goals:['fish_1','perfect_1','fish_25','treasure_3','heavy_fish','perfect_10','fish_100','fish_master']},
+    {id:'explore',name:'探索',medal:3,goals:['explore_1','explore_5','explorer_20','new_world','explore_60','discovery_all']},
+    {id:'craft',name:'工坊',medal:4,goals:['craft_1','crafter_15','craft_50','craft_150']},
+    {id:'home',name:'经营',medal:5,goals:['collector','idle_home','all_rounder','level_15','projects_3']},
+  ];
+  for(const category of ACHIEVEMENT_CATEGORIES) category.goals.forEach((id,index)=>{
+    const goal=MILESTONES.find(g=>g.id===id);goal.category=category.id;goal.medal=category.medal;goal.sequence=index+1;
+  });
+  function milestoneStatus(s,g) {
+    const value=Math.max(0,Number(g.value(s))||0),claimed=s.claimedMilestones.includes(g.id);
+    return {value,progress:claimed?g.target:Math.min(value,g.target),claimed,ready:!claimed&&value>=g.target};
+  }
   const PROJECTS = [
     {id:'shed',name:'修好公共储物棚',needs:{'木材':6,'布料':3,'废铁':2},reward:{'雨布挎包':1},coins:100,desc:'种田与探索共同备料，做出第一件实用装备。'},
     {id:'kitchen',name:'小院周末食堂',needs:{'蔬菜干':2,'咸香蛋饼':2,'鱼肉干':1},reward:{'净水':4,'简易敷料':2},coins:180,desc:'需要农作物、畜牧、钓鱼和加工共同供货。'},
@@ -406,7 +442,7 @@
       s.idle.lastAt=now;message=s.idle.enabled?'值守已按当前安排运行':'值守已暂停，作物仍会自然生长';
     } else if(type === 'milestone') {
       const goal=MILESTONES.find(g=>g.id===arg.id);
-      requireThat(goal && !s.claimedMilestones.includes(goal.id) && goal.value(s)>=goal.target,'这份成就奖励暂不能领取');
+      requireThat(goal && milestoneStatus(s,goal).ready,'这份成就奖励暂不能领取');
       s.claimedMilestones.push(goal.id);s.coins+=goal.coins;
       Object.entries(goal.items).forEach(([name,count])=>add(s,name,count));message='完成成就「'+goal.name+'」，物资已放入仓库';
     } else if(type === 'project') {
@@ -637,7 +673,7 @@
     next[RECEIPTS] = {...receipts,[pending.id]:{name,count:item.count,at:pending.at}};
     return {variables:next,duplicate:false,name};
   }
-  const Core = {VERSION,KEY,RECEIPTS,CROPS,ANIMALS,FISH,ITEMS,RECIPES,ZONES,STANCES,UPGRADES,WEATHER,RODS,BAITS,SPOTS,TALENTS,MILESTONES,PROJECTS,ENCOUNTERS,
+  const Core = {VERSION,KEY,RECEIPTS,CROPS,ANIMALS,FISH,ITEMS,RECIPES,ZONES,STANCES,UPGRADES,WEATHER,RODS,BAITS,SPOTS,TALENTS,MILESTONES,ACHIEVEMENT_CATEGORIES,milestoneStatus,PROJECTS,ENCOUNTERS,
     makeState,tick,dayKey,weather,action,makeFishEngine,stepFish,settleIdle,talentPoints,migrate,reserve,mergeReward,finishTransfer,restoreTransfer,itemPayload,available,consume,clone,hash};
   if(typeof window === 'undefined' && typeof module !== 'undefined' && module.exports) { module.exports = Core; return; }
   // 浏览器界面与持久化实现在下方。
@@ -649,7 +685,7 @@
     const preview = window.__GARDEN_PREVIEW__ === true;
     const stateKey = preview ? KEY + '_preview' : KEY;
     // Art is pinned independently of script releases; preview resolves the same files locally.
-    const ART_REV = '5bb87e39fc5219f8af8258b369b401ebe80db13f';
+    const ART_REV = '0976c09196e1df8fe9634090b683c6dcffc812fd';
     const artBases = [
       'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@'+ART_REV+'/assets/v4.2/',
       'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@'+ART_REV+'/assets/v4.2/',
@@ -664,7 +700,7 @@
     let lastFocus = null, dialogCallback = null, fishFrame = 0;
     const subscriptions = [];
     const detailStates = new Map();
-    const view = {plot:0,pen:0,recipe:RECIPES[0].name,bag:null};
+    const view = {plot:0,pen:0,recipe:RECIPES[0].name,bag:null,achievement:null,achievementFilter:'all',achievementPage:0};
     let navDrag=null, navSuppressClick=false, navClickTimer=0, lastNavTab=null, navObserver=null;
     const failedArt=new Map();
     const sessionOwner=uid();
@@ -691,8 +727,8 @@
     doc.body.appendChild(host);
     const $ = q => root.querySelector(q);
     const panel = $('.panel'), main = $('main'), dialog = $('dialog');
-    const navItems = [['overview','01','小院'],['farm','02','田地'],['ranch','03','牧场'],['fish','04','垂钓'],['explore','05','探索'],['workshop','06','工坊'],['journal','07','手账'],['idle','08','值守'],['bag','09','仓库']];
-    $('nav').innerHTML = navItems.map(([key,icon,title])=>'<button data-tab="'+key+'"><span>'+icon+'</span>'+title+'<i>›</i></button>').join('');
+    const navItems = [['overview','01','小院'],['farm','02','田地'],['ranch','03','牧场'],['fish','04','垂钓'],['explore','05','探索'],['workshop','06','工坊'],['journal','07','手账'],['achievements','08','成就'],['idle','09','值守'],['bag','10','仓库']];
+    $('nav').innerHTML = navItems.map(([key,icon,title])=>'<button data-tab="'+key+'"><span>'+icon+'</span>'+title+(key==='achievements'?'<b class="nav-count" hidden></b>':'')+'<i>›</i></button>').join('');
     // Navigation never gets rebuilt with the page; dragging must not change selection.
     const nav=$('nav');
     function updateNavEdges(){
@@ -756,7 +792,7 @@
       const name=img.dataset.asset,next=Number(img.dataset.provider||0)+1;
       failedArt.set(name,next);
       if(next<artBases.length){img.dataset.provider=String(next);img.src=artBases[next]+name+'.webp';}
-      else {img.removeAttribute('src');img.hidden=true;img.parentElement.classList.add('asset-missing');}
+      else {img.removeAttribute('src');img.hidden=true;(img.closest('.scene-tile,.sprite,.medal,.map-art')||img.parentElement).classList.add('asset-missing');}
     },true);
     resize(); p.addEventListener('resize',resize); p.visualViewport?.addEventListener('resize',resize);
     function cleanup() {
@@ -968,11 +1004,13 @@
       $('.garden').className='garden '+(state.theme==='light'?'light':'dark');
       root.querySelectorAll('[data-tab]').forEach(btn=>{btn.classList.toggle('active',btn.dataset.tab===tab);btn.setAttribute('aria-current',btn.dataset.tab===tab?'page':'false');});
       tick(state);
+      const readyGoals=MILESTONES.filter(g=>milestoneStatus(state,g).ready).length;
+      const achievementCount=$('.nav-count');achievementCount.hidden=!readyGoals;achievementCount.textContent=readyGoals;achievementCount.setAttribute('aria-label',readyGoals+'项奖励待领取');
       $('#coins').textContent=money(state.coins);$('#energy').textContent=state.energy+'/'+(10+state.upgrades.tools);
       if(!state.fishing)liveFish=null;
       else if(liveFish?.id!==state.fishing.id || liveFish.owner!==state.fishing.owner)liveFish=clone(state.fishing);
       else if(state.fishing.phase==='fight' && liveFish.phase==='waiting')liveFish=clone(state.fishing);
-      const renderers={overview:overviewPage,farm:farmPage,ranch:ranchPage,fish:fishPage,explore:explorePage,workshop:workshopPage,journal:journalPage,idle:idlePage,bag:bagPage};
+      const renderers={overview:overviewPage,farm:farmPage,ranch:ranchPage,fish:fishPage,explore:explorePage,workshop:workshopPage,journal:journalPage,achievements:achievementsPage,idle:idlePage,bag:bagPage};
       main.dataset.page=tab;
       main.innerHTML=renderers[tab]();
       main.querySelectorAll('details').forEach(x=>{if(detailStates.has(x.dataset.detail))x.open=detailStates.get(x.dataset.detail);});
@@ -1002,7 +1040,7 @@
       return '<span class="sprite '+extra+'" style="--sx:'+index%6+';--sy:'+sourceY/256+'" aria-hidden="true">'+artImage('sprites-v2')+'</span>';
     }
     function scene(index,extra=''){
-      return '<div class="scene-tile '+extra+'" style="--sx:'+index%2+';--sy:'+Math.floor(index/2)+'" aria-hidden="true">'+artImage('scenes')+'</div>';
+      return '<div class="scene-tile '+extra+'" style="--sx:'+index%2+';--sy:'+Math.floor(index/2)+'" aria-hidden="true"><div class="scene-viewport"><div class="scene-art">'+artImage('scenes')+'</div></div></div>';
     }
     function overviewPage() {
       const sky=weather(state), mature=countReady(), stock=state.bag.reduce((sum,x)=>sum+x.count,0);
@@ -1079,10 +1117,34 @@
       return heading('小院手账','经营心得、长期交付与收集成就。每升3级，获得1点心得。')+
         section('经营心得 · 可用 '+points+' 点','<div class="upgrade-grid">'+talents+'</div>')+
         '<section class="card project-card">'+projectHtml+'</section>'+
-        section('成就墙 · '+state.claimedMilestones.length+' 项已领取','<div class="milestone-grid">'+MILESTONES.map(g=>{
-          const claimed=state.claimedMilestones.includes(g.id),done=g.value(state)>=g.target;
-          return '<article class="milestone"><div class="row"><h4>'+g.name+'</h4><span class="pill">'+(claimed?'已领取':done?'已达成':'积累中')+'</span></div><p>'+g.desc+' · '+Math.min(g.target,g.value(state))+'/'+g.target+'</p>'+progress(g.value(state)/g.target*100)+'<small>'+g.coins+' 币 + '+Object.entries(g.items).map(([n,c])=>n+' ×'+c).join('、')+'</small>'+button('milestone',claimed?'已领取':'领取奖励','data-id="'+g.id+'"',claimed||!done,true)+'</article>';
-        }).join('')+'</div>')+section('路上的发现 · '+state.discoveries.length+' 处','<div class="tags">'+(state.discoveries.length?state.discoveries.map(n=>'<span>⌖ '+e(n)+'</span>').join(''):'<p>在探索途中做出选择，会逐渐记录新的地点。</p>')+'</div>');
+        '<section class="card achievement-link"><div><h3>小院成就册 · '+MILESTONES.filter(g=>milestoneStatus(state,g).claimed).length+' / '+MILESTONES.length+'</h3><p>六类收藏徽章，每项成绩都有独立奖励。</p></div><button data-tab="achievements">翻开成就册 ›</button></section>'+section('路上的发现 · '+state.discoveries.length+' 处','<div class="tags">'+(state.discoveries.length?state.discoveries.map(n=>'<span>⌖ '+e(n)+'</span>').join(''):'<p>在探索途中做出选择，会逐渐记录新的地点。</p>')+'</div>');
+    }
+    function medal(index,extra='') {
+      return '<span class="medal '+extra+'" style="--mx:'+index%3+';--my:'+Math.floor(index/3)+'" aria-hidden="true">'+artImage('medals')+'</span>';
+    }
+    function achievementsPage() {
+      const ordered=ACHIEVEMENT_CATEGORIES.flatMap(c=>c.goals.map(id=>MILESTONES.find(g=>g.id===id)));
+      const ready=ordered.filter(g=>milestoneStatus(state,g).ready).length,claimed=ordered.filter(g=>milestoneStatus(state,g).claimed).length;
+      const filter=view.achievementFilter;
+      const filtered=ordered.filter(g=>filter==='all'||(filter==='ready'?milestoneStatus(state,g).ready:g.category===filter));
+      const pages=Math.max(1,Math.ceil(filtered.length/6));view.achievementPage=clamp(view.achievementPage,0,pages-1);
+      const visible=filtered.slice(view.achievementPage*6,view.achievementPage*6+6);
+      if(!visible.some(g=>g.id===view.achievement))view.achievement=visible.find(g=>milestoneStatus(state,g).ready)?.id||visible[0]?.id||null;
+      const goal=visible.find(g=>g.id===view.achievement);
+      const filters=[['all','全部',ordered.length],['ready','可领取',ready],...ACHIEVEMENT_CATEGORIES.map(c=>[c.id,c.name,c.goals.length])];
+      const statusLabel=s=>s.claimed?'已领取':s.ready?'可领取':'进行中';
+      const valueLabel=(g,s)=>Number(s.progress.toFixed(2))+' / '+g.target+(g.unit?' '+g.unit:'');
+      const cards=visible.map(g=>{
+        const s=milestoneStatus(state,g),selected=g.id===view.achievement;
+        return '<button class="achievement-card '+(s.claimed?'claimed':s.ready?'ready':'')+' '+(selected?'selected':'')+'" data-do="select-achievement" data-id="'+g.id+'" aria-pressed="'+selected+'">'+medal(g.medal)+'<span class="achievement-copy"><span class="achievement-title"><b>'+g.name+'</b><small>'+statusLabel(s)+'</small></span><span class="achievement-goal">'+g.desc+'</span><span class="achievement-progress">'+valueLabel(g,s)+'</span>'+progress(s.progress/g.target*100)+'<span class="achievement-prize">'+g.coins+' 币 · '+Object.entries(g.items).map(([n,c])=>n+' ×'+c).join('、')+'</span></span></button>';
+      }).join('');
+      let detail='<aside class="card achievement-detail"><h3>这一页的奖励已收好</h3><p>切换分类，看看下一枚徽章。</p></aside>';
+      if(goal){
+        const s=milestoneStatus(state,goal),category=ACHIEVEMENT_CATEGORIES.find(c=>c.id===goal.category);
+        const requirements=goal.id==='all_rounder'?'<div class="achievement-requirements">'+[['等级',state.level,8],['作物',state.stats.harvest,30],['畜牧',state.stats.ranch,30],['渔获',state.stats.fish,30]].map(([n,v,t])=>'<span>'+n+' '+Math.min(v,t)+'/'+t+'</span>').join('')+'</div>':'';
+        detail='<aside class="card achievement-detail" data-achievement="'+goal.id+'"><div class="achievement-detail-head">'+medal(goal.medal,'medal-large')+'<div><small>'+category.name+'收藏 · '+String(goal.sequence).padStart(2,'0')+'</small><h3>'+goal.name+'</h3><span class="pill">'+statusLabel(s)+'</span></div></div><p>'+goal.desc+'</p>'+requirements+'<div class="achievement-detail-progress"><b>'+valueLabel(goal,s)+'</b>'+progress(s.progress/goal.target*100)+'</div><div class="achievement-rewards"><div><b>'+goal.coins+' 小院币</b><small>小院经营货币</small></div>'+Object.entries(goal.items).map(([name,count])=>'<div><b>'+name+' ×'+count+'</b><small>'+(ITEMS[name].transferable?'实体物资 · 可手动装箱':'经营补给 · 仅在小院使用')+'</small></div>').join('')+'</div>'+button('milestone',s.claimed?'奖励已领取':s.ready?'领取这项奖励':'达成目标后领取','data-id="'+goal.id+'"',!s.ready,true)+'</aside>';
+      }
+      return heading('小院成就册','每一点经营，都值得留下一枚纪念。')+'<div class="achievement-summary"><span><b>'+claimed+'</b> / '+ordered.length+' 已领取</span><span><b>'+ready+'</b> 项奖励待领取</span><small>旧版领奖记录已保留</small></div><div class="achievement-filters" aria-label="成就分类">'+filters.map(([id,name,count])=>'<button data-do="achievement-filter" data-id="'+id+'" class="'+(id===filter?'selected':'')+'" aria-pressed="'+(id===filter)+'">'+name+' <small>'+count+'</small></button>').join('')+'</div><div class="achievement-layout"><section class="achievement-browser"><div class="achievement-grid">'+(cards||'<div class="card"><h3>暂时没有待领奖励</h3><p>继续照料小院，新的成绩会自动记录。</p></div>')+'</div><div class="achievement-pagination">'+button('achievement-page','‹ 上一页','data-index="'+(view.achievementPage-1)+'"',!view.achievementPage)+'<span>'+(view.achievementPage+1)+' / '+pages+' 页</span>'+button('achievement-page','下一页 ›','data-index="'+(view.achievementPage+1)+'"',view.achievementPage>=pages-1)+'</div></section>'+detail+'</div><div class="note">每项奖励只能领取一次，先进入小院仓库；实体物资可到仓库手动装入角色背包。不会自动改动正文变量。</div>';
     }
     function idlePage() {
       const idle=state.idle,r=idle.lastReport;
@@ -1126,6 +1188,9 @@
       }
       if(type==='select-recipe'){view.recipe=btn.dataset.name;render();return;}
       if(type==='select-stack'){view.bag=btn.dataset.id;render();return;}
+      if(type==='select-achievement'){view.achievement=btn.dataset.id;render();return;}
+      if(type==='achievement-filter'){view.achievementFilter=btn.dataset.id;view.achievementPage=0;view.achievement=null;render();return;}
+      if(type==='achievement-page'){view.achievementPage=Number(btn.dataset.index);view.achievement=null;render();return;}
       if(type==='demo-supplies' && preview) {await mutate(s=>{s.coins+=1200;s.level=Math.max(10,s.level);['木材','布料','废铁','净水','野果','香料','草药','电池','电子元件','白菜','小麦','鸡蛋'].forEach(n=>add(s,n,12));return '已发放预览体验包，不影响正式小院';});return;}
       if(type==='pause-fish') {fishPaused=true;releaseFish();await flushFish();render();return;}
       if(type==='resume-fish' || type==='hook') {
@@ -1344,8 +1409,21 @@ footer{display:flex;justify-content:space-between;align-items:center;gap:12px;pa
 .sprite img{position:absolute;width:600%;height:400%;max-width:none;left:calc(var(--sx)*-100%);top:calc(var(--sy)*-100%);display:block}
 .sprite.asset-missing::after,.sprite:has(img[hidden])::after{content:"◇";position:absolute;inset:0;display:grid;place-items:center;color:#7c6751;font-size:23px}
 .item-symbol{display:grid;place-items:center;width:42px;height:42px;flex:0 0 auto;border:1px solid var(--line);background:var(--raised);border-radius:7px;font-size:25px}
-.scene-tile{position:relative;overflow:hidden;aspect-ratio:9/4;background:#383b40;min-width:0}.scene-tile img{position:absolute;width:200%;height:300%;max-width:none;left:calc(var(--sx)*-100%);top:calc(var(--sy)*-100%)}
-.scene-tile.asset-missing::after{content:"场景图片暂未加载";display:grid;place-items:center;position:absolute;inset:0;color:#d4cec3;font-size:12px}
+.scene-tile{position:relative;overflow:hidden;aspect-ratio:9/4;background:#383b40;min-width:0;width:100%;max-width:100%;isolation:isolate}.scene-viewport{position:absolute;inset:0;overflow:hidden;container-type:size}.scene-art{position:absolute;width:100%;aspect-ratio:9/4;left:50%;top:50%;transform:translate(-50%,-50%);overflow:hidden}.scene-tile img{position:absolute;width:200%;height:300%;max-width:none;left:calc(var(--sx)*-100%);top:calc(var(--sy)*-100%);display:block}
+@supports(width:1cqw){.scene-art{width:max(100cqw,225cqh)}}
+.nav-count{font:10px/1.4 system-ui;padding:1px 5px;border-radius:9px;color:var(--ink);background:var(--accent)}
+.medal{display:block;position:relative;flex:0 0 auto;width:54px;height:54px;overflow:hidden;background:#e8dfcf;border:1px solid #bba787;border-radius:12px;isolation:isolate}
+.medal img{position:absolute;width:300%;height:200%;max-width:none;left:calc(var(--mx)*-100%);top:calc(var(--my)*-100%);display:block}.medal-large{width:88px;height:88px;border-radius:17px}.medal.asset-missing::after,.medal:has(img[hidden])::after{content:"章";position:absolute;inset:0;display:grid;place-items:center;color:#785a3a;font-size:24px}
+.achievement-summary,.achievement-link{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.achievement-summary{padding:10px 14px;border:1px solid var(--line);background:var(--panel);border-radius:8px;color:var(--muted)}.achievement-summary b{color:var(--accent);font-size:20px}.achievement-link p{font-size:12px}
+.achievement-filters{display:flex;flex-wrap:wrap;gap:6px}.achievement-filters button{min-height:32px;padding:5px 10px;font-size:12px}.achievement-filters small{margin-left:3px}
+.achievement-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;align-items:start;gap:14px}.achievement-browser{min-width:0}.achievement-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}
+.achievement-card{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:11px;min-width:0;background:var(--panel);border-radius:9px}.achievement-copy{display:block;min-width:0;flex:1}.achievement-title{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:3px 7px}.achievement-title b{font-size:13px}.achievement-title small{font-size:10px}.achievement-goal,.achievement-progress,.achievement-prize{display:block;font-size:11px;margin-top:5px;color:var(--muted)}.achievement-progress{font-variant-numeric:tabular-nums;color:var(--text)}.achievement-card .progress{margin:5px 0;height:4px}.achievement-prize{font-size:10px;line-height:1.6}.achievement-card.ready .achievement-title small{color:var(--accent);font-weight:700}.achievement-card.ready{border-color:var(--accent)}.achievement-card.claimed .medal{filter:saturate(.6)}
+.achievement-detail{position:sticky;top:0;padding:14px}.achievement-detail-head{display:flex;gap:12px;align-items:center;margin-bottom:12px}.achievement-detail-head>div{min-width:0}.achievement-detail-head h3{font-size:17px;margin:3px 0 6px}.achievement-detail>p{font-size:12px}.achievement-detail-progress{margin:10px 0;font-size:12px}.achievement-detail-progress .progress{margin-top:6px}.achievement-detail>button{width:100%;margin-top:12px}.achievement-rewards{border:1px solid var(--line);border-radius:7px;overflow:hidden}.achievement-rewards>div{padding:8px 10px;background:var(--bg)}.achievement-rewards>div+div{border-top:1px solid var(--line)}.achievement-rewards b,.achievement-rewards small{display:block;font-size:12px}.achievement-rewards small{font-size:10px;margin-top:2px}.achievement-requirements{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.achievement-requirements span{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:2px 5px}
+.achievement-pagination{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;font-size:11px}.achievement-pagination button{font-size:11px;min-height:32px;padding:5px 9px}
+@container garden (max-width:980px){.achievement-layout{grid-template-columns:minmax(0,1fr) 245px}.achievement-grid{grid-template-columns:1fr}.achievement-card .medal{width:46px;height:46px}.achievement-title{flex-wrap:nowrap}}
+@container garden (max-width:720px){.achievement-layout{display:flex;flex-direction:column;gap:10px}.achievement-browser,.achievement-detail{width:100%}.achievement-detail{position:static;order:-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 12px;padding:11px}.achievement-detail-head{margin:0;gap:9px}.achievement-detail-head h3{font-size:15px}.achievement-detail .medal-large{width:62px;height:62px}.achievement-detail>p{grid-column:1;font-size:11px}.achievement-detail-progress{grid-column:1;margin:0}.achievement-requirements{grid-column:1;margin:0}.achievement-rewards{grid-column:2;grid-row:1/5;align-self:start}.achievement-rewards>div{padding:6px 8px}.achievement-detail>button{grid-column:1/-1;margin-top:0;min-height:33px;font-size:12px}.achievement-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.achievement-card{padding:9px;gap:7px}.achievement-title{flex-wrap:wrap}}
+@container garden (max-width:480px){.achievement-summary{gap:5px 10px;padding:8px 10px;font-size:11px}.achievement-summary b{font-size:17px}.achievement-summary>small{display:none}.achievement-filters{gap:5px}.achievement-filters button{padding:5px 8px;font-size:11px}.achievement-grid{grid-template-columns:1fr}.achievement-title{flex-wrap:nowrap}.achievement-detail-head{gap:6px}.achievement-detail .medal-large{width:45px;height:45px}.achievement-detail-head h3{font-size:13px}.achievement-detail-head small{font-size:9px}.achievement-detail-head .pill{font-size:10px}.achievement-rewards b{font-size:11px}.achievement-rewards small{font-size:9px}.achievement-detail{gap:7px}.achievement-card .medal{width:49px;height:49px}.achievement-title b{font-size:12px}.achievement-goal{margin-top:4px}.achievement-prize{font-size:10px}.achievement-detail>p{font-size:11px}}
+.scene-tile.asset-missing::after,.scene-tile:has(img[hidden])::after{content:"场景图片暂未加载";display:grid;place-items:center;position:absolute;inset:0;color:#d4cec3;font-size:12px}
 .management-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px;align-items:start}.field-board{padding:12px;background:var(--panel)}
 .board-legend{display:flex;gap:14px;align-items:center;color:var(--muted);font-size:11px;padding:0 2px 10px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:5px;vertical-align:middle}.dot.ready{background:var(--good)}
 .land-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.land-tile{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;min-height:116px;padding:11px 5px 6px;border:1px solid var(--line);background:var(--bg);border-radius:7px;text-align:center}
@@ -1365,7 +1443,7 @@ footer{display:flex;justify-content:space-between;align-items:center;gap:12px;pa
 .note{border-left:2px solid var(--accent);padding:3px 10px;font-size:11px;color:var(--muted)}.note p{font-size:11px}
 .tackle-strip{display:flex;gap:6px;flex-wrap:wrap}.tackle-strip>button{flex:1;min-width:85px;text-align:left;font-size:12px}
 .pond{padding:0;overflow:hidden;text-align:left;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(220px,1fr);align-items:center;gap:0}
-.pond-scene{grid-row:1/3;aspect-ratio:9/4;height:100%;min-height:210px}.pond-scene img{object-fit:fill}
+.pond-scene{grid-row:1/3;aspect-ratio:auto;height:auto;min-height:210px;align-self:stretch}
 .pond-status{padding:15px 18px 6px}.pond-status h3{font-size:17px;margin:7px 0}.pond-status p{font-size:12px}.pond>.actions{padding:7px 18px 15px}
 .fish-battle{max-width:720px;margin-inline:auto}.fish-board{display:grid;grid-template-columns:130px minmax(0,1fr);align-items:center;gap:24px;padding:0 0 12px}.fish-lane{position:relative;overflow:hidden;width:90px;height:clamp(190px,calc(var(--vh,100vh) - 285px),330px);margin:auto;background:linear-gradient(#354a5b,#1c2734);border:1px solid #657789;border-radius:9px;box-shadow:inset 0 0 18px #0006}
 .fish-waterlines{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0,transparent 25px,#ffffff0c 26px)}
@@ -1374,7 +1452,7 @@ footer{display:flex;justify-content:space-between;align-items:center;gap:12px;pa
 .hold-btn{width:100%;min-height:58px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.hold-btn small{display:block;color:inherit;opacity:.8;margin-top:4px}.hold-btn.pressed{filter:brightness(1.12);box-shadow:inset 0 3px 10px #0004}
 .fish-secondary{margin-top:7px}.fish-secondary button{min-height:30px;font-size:11px;padding:5px 8px}.chest-note{padding:6px 8px;border:1px dashed var(--line);border-radius:6px;font-size:11px;margin-top:8px}.chest-note .progress{margin:5px 0 0}.catch-meter{display:flex;justify-content:space-between;gap:12px;font-size:12px}.catch-meter b{color:var(--accent);font-size:16px}.catch-progress{height:8px;margin-bottom:0}
 .collection{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px}.collection>div{display:flex;flex-direction:column;align-items:center;text-align:center;padding:9px 5px;border:1px solid var(--line);border-radius:7px}.collection span{font-size:23px}.collection b{font-size:12px}.collection small{font-size:10px}.unknown{opacity:.52}
-.zone-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.zone.card{padding:0;overflow:hidden;display:grid;grid-template-columns:42% minmax(0,1fr);align-items:stretch}.zone .scene-tile{height:100%;min-height:142px}.zone-copy{padding:12px;min-width:0}.zone-copy h3{font-size:15px}.zone-copy>p{font-size:11px;margin:5px 0}.zone-copy>button{width:100%;font-size:12px;min-height:32px}
+.zone-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.zone.card{padding:0;overflow:hidden;display:grid;grid-template-columns:42% minmax(0,1fr);align-items:stretch}.zone .scene-tile{height:auto;aspect-ratio:auto;min-height:150px}.zone-copy{padding:12px;min-width:0}.zone-copy h3{font-size:15px}.zone-copy>p{font-size:11px;margin:5px 0}.zone-copy>button{width:100%;font-size:12px;min-height:32px}
 .row{display:flex;align-items:center;justify-content:space-between;gap:8px}.encounter-options{display:grid;gap:7px;margin:10px 0}.encounter-options button{text-align:left;font-size:12px}
 .workshop-banner{display:flex;gap:16px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;overflow:hidden}.workshop-banner .scene-tile{width:180px;flex-shrink:0}.workshop-banner .heading{padding:8px 12px 8px 0}.workshop-banner h2{font-size:19px}
 .recipe-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:430px;overflow-y:auto;overscroll-behavior-y:contain;min-width:0;padding:1px 5px 2px 1px}
@@ -1406,6 +1484,7 @@ footer{padding:5px 10px;font-size:9px}summary{font-size:12px}summary small{font-
 @container garden (max-width:720px){main[data-page="farm"] .management-layout,main[data-page="ranch"] .management-layout{display:flex;flex-direction:column}main[data-page="farm"] .field-board,main[data-page="ranch"] .field-board{width:100%}main[data-page="farm"] .selection-panel,main[data-page="ranch"] .selection-panel{order:-1;position:sticky;top:-1px;z-index:2;width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px}main[data-page="farm"] .selection-title,main[data-page="ranch"] .selection-title{margin:0;grid-column:1;grid-row:1}main[data-page="farm"] .selection-panel>.actions,main[data-page="ranch"] .selection-panel>.actions{grid-column:2;grid-row:1;align-items:center;margin:0;max-width:175px}main[data-page="farm"] .selection-panel>.progress{display:none}main[data-page="farm"] .selection-tags,main[data-page="ranch"] .selection-tags{grid-column:1/-1;margin:0}main[data-page="farm"] .trouble-row,main[data-page="ranch"] .danger-zone{grid-column:1/-1;margin:0;padding-top:5px}main[data-page="farm"] .selection-title p,main[data-page="ranch"] .selection-title p{font-size:10px}.management-layout .selection-title .sprite{width:40px;height:40px}}
 @container garden (max-width:480px){main[data-page="farm"] .selection-panel>.actions,main[data-page="ranch"] .selection-panel>.actions{max-width:88px}main[data-page="farm"] .selection-panel>.actions button,main[data-page="ranch"] .selection-panel>.actions button{font-size:11px;padding:7px 8px}main[data-page="farm"] .selection-title p,main[data-page="ranch"] .selection-title p{display:none}main[data-page="ranch"] .selection-panel>.actions{gap:4px}main[data-page="ranch"] .danger-zone small{font-size:9px}.map-art{max-height:none}}
 @container garden (max-width:340px){.brand .mark{display:none}.wallet{gap:8px}.overview-heading h2{font-size:14px}.weather-tag{font-size:9px}.map-pin small{display:none}.map-pin{min-height:32px;min-width:39px;padding:4px 6px}.land-tile .sprite{width:35px;height:35px}.land-tile{min-height:89px}.recipe-option .item-symbol{width:24px;height:24px}.stock-tile .sprite{width:34px;height:34px}}
+@container garden (max-width:720px){.pond-scene{aspect-ratio:9/4}}
 @media(max-width:600px){.panel{width:calc(100% - 8px);height:calc(var(--vh,100vh) - 8px);border-radius:9px}.bubble{right:10px;bottom:10px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 `;

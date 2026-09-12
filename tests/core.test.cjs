@@ -10,6 +10,44 @@ function state(items={}) {
   return C.migrate({fish:{money:2000},meta:{level:10,adventure:{materials:items}}},now);
 }
 const target={scope:'角色:聊天',messageId:4,swipe:0,textHash:42,label:'测试角色'};
+
+test('32项成就都有唯一分类、可达目标、有效奖励；每项只发放一次',()=>{
+  assert.equal(C.MILESTONES.length,32);
+  assert.equal(new Set(C.MILESTONES.map(g=>g.id)).size,32);
+  const ids=C.ACHIEVEMENT_CATEGORIES.flatMap(c=>c.goals);assert.equal(ids.length,32);assert.equal(new Set(ids).size,32);
+  for(const goal of C.MILESTONES){
+    assert.ok(ids.includes(goal.id));assert.ok(goal.coins>0&&Number.isInteger(goal.coins));assert.ok(goal.target>0);
+    for(const [name,count] of Object.entries(goal.items)){assert.ok(C.ITEMS[name],name);assert.ok(Number.isInteger(count)&&count>0);}
+    const s=C.makeState(now);C.tick(s,now);
+    assert.equal(C.milestoneStatus(s,goal).ready,false,goal.id+' fresh');
+    assert.throws(()=>C.action(s,'milestone',{id:goal.id},now),/暂不能领取/);
+    Object.assign(s.stats,{harvest:500,ranch:300,fish:100,explore:60,craft:150});s.level=15;
+    [...C.CROPS,...C.FISH].forEach(x=>s.collection[x.name]=1);
+    s.discoveries=Array.from({length:12},(_,i)=>'place'+i);s.projects=C.PROJECTS.map(p=>p.id);s.idle.built=true;
+    s.fishBook.perfect=10;s.fishBook.chests=3;s.fishBook.heaviest={name:'鲟鱼',weight:4};
+    assert.equal(C.milestoneStatus(s,goal).ready,true,goal.id+' target');
+    const before=C.clone(s),counts=Object.fromEntries(Object.keys(goal.items).map(n=>[n,C.available(s,n)]));
+    C.action(s,'milestone',{id:goal.id},now);
+    assert.equal(s.coins,before.coins+goal.coins,goal.id);
+    for(const [name,count] of Object.entries(goal.items))assert.equal(C.available(s,name),counts[name]+count);
+    assert.deepEqual(s.stats,before.stats);assert.deepEqual(s.deliveries,[]);assert.equal(s.pending,null);
+    const saved=C.clone(s);assert.throws(()=>C.action(s,'milestone',{id:goal.id},now),/暂不能领取/);assert.deepEqual(s,saved);
+    const reloaded=C.clone(s);C.tick(reloaded,now);assert.equal(C.milestoneStatus(reloaded,goal).ready,false);
+  }
+});
+
+test('成就精确阈值、鱼类记录对象、复合条件和旧领奖兼容',()=>{
+  const s=state(),heavy=C.MILESTONES.find(g=>g.id==='heavy_fish'),all=C.MILESTONES.find(g=>g.id==='all_rounder');
+  s.fishBook.heaviest={name:'鲟鱼',weight:3.99};assert.equal(C.milestoneStatus(s,heavy).ready,false);
+  s.fishBook.heaviest.weight=4;assert.equal(C.milestoneStatus(s,heavy).ready,true);
+  Object.assign(s.stats,{harvest:30,ranch:30,fish:29});assert.equal(C.milestoneStatus(s,all).ready,false);
+  s.stats.fish=30;s.level=7;assert.equal(C.milestoneStatus(s,all).ready,false);
+  s.level=8;assert.equal(C.milestoneStatus(s,all).ready,true);
+  const legacy=C.migrate({meta:{achievements:['fish_25','unknown_old_id']}},now);legacy.stats.fish=100;
+  assert.equal(C.MILESTONES.filter(g=>C.milestoneStatus(legacy,g).claimed).length,1);
+  assert.throws(()=>C.action(legacy,'milestone',{id:'fish_25'},now),/暂不能领取/);
+  assert.ok(legacy.claimedMilestones.includes('unknown_old_id'));
+});
 test('轮作、浇水与照料均生效，收获不能重复领取',()=>{
   const s=state(); s.plots[0].lastFamily='叶菜';
   C.action(s,'plant',{index:0,name:'土豆'},now,()=>1);

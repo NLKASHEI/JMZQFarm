@@ -1,4 +1,4 @@
-# 缄默之秋 · 小农场 4.2
+# 缄默之秋 · 小农场 4.3
 
 一方秋日小院：种菜、养动物、追鱼、探索、制作、离线值守与实体奖励装箱。
 
@@ -7,12 +7,20 @@
 在酒馆助手脚本编辑器中替换原小农场脚本，不要同时启用新旧两个实例：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.2.0/farm.min.js';
+import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.0/farm.min.js';
 ```
 
 也可直接复制 `farm.js` 全文。若 testingcf 无法访问，可将脚本地址域名换成 `cdn.jsdelivr.net`。脚本不调用额外模型API，也不依赖字体CDN。
 
-## 4.2 绘景与紧凑布局
+## 4.3 成就册与布局修复
+
+- 新增独立成就 TAB：32项、六类收藏徽章，分类筛选，每页最多6项，进度与奖励逐项列出。
+- 每项都有固定的小院币和物品奖励；已领取不可重复领取。旧版11项成就的ID、奖励及领奖记录保持不变。
+- 种植、牧场、鱼种收集、完美垂钓、4公斤渔获、探索发现、工坊制作、公共交付和值守建设均有对应目标。
+- 实体奖励进入小院仓库，再由玩家手动装箱；营养液、拟饵等只在小院使用，不自动写入正文变量。
+- 修复探索图满高反撑宽度覆盖文字；场景容器独立裁景，钓鱼、工坊和值守一并限制边界。
+
+## 绘景与紧凑布局
 
 - 生成的像素绘景：可点击的小院地图、河岸、四条探索路线、工坊与24个作物/动物图标。旧SVG场景已移除。
 - 全部设备统一顶部导航：触摸横滑、鼠标拖动、滚轮和左右箭头；只在切换标签时定位当前项，数据刷新不回弹。
@@ -25,7 +33,7 @@ import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.2.0/farm.min.js';
 
 12块田、6个围栏；浇水、照料、轮作、杂草虫害处理。成熟不腐烂。纵向追鱼保留按住上浮/松开下沉、惯性、鱼群习性、永久钓具、4个钓点、11种鱼和宝箱；不是单击判定。
 
-探索有三种搜寻策略与中途抉择，结果在出发时固定；工坊有13个配方。手账有4种专长、11项成就和3期长期交付。
+探索有三种搜寻策略与中途抉择，结果在出发时固定；工坊有13个配方。手账有4种专长和3期长期交付，独立成就册有32项目标。
 
 值守需主动建造、开启并保存。最多结算8小时离线时间，受每日金币预算、余额与200份代收上限约束。可选择续种、喂食与普通余粮售卖；不会自动出栏、钓鱼、选择探索分支或装箱到剧情背包。
 
@@ -41,7 +49,7 @@ import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.2.0/farm.min.js';
 
 界面只请求 `assets/v4.2` 中的 WebP。图片地址固定到不可变提交，依次尝试 testingcf.jsdelivr、cdn.jsdelivr、GitHub原始文件。图片不可访问时保留文字和操作；首次离线不保证有配图。
 
-生成原稿PNG、提示词、图集采样坐标见 [assets/ARTWORK.md](assets/ARTWORK.md)。当前实际使用 `sprites-v2.webp`；首版仅留作历史原稿。三张运行时配图合计约1.5MB，共享浏览器缓存，不逐帧绘制或重新下载。
+生成原稿PNG、提示词、图集采样坐标见 [assets/ARTWORK.md](assets/ARTWORK.md) 与 [成就徽章提示词](assets/ACHIEVEMENTS.md)。当前实际使用 `sprites-v2.webp`；首版仅留作历史原稿。含徽章的四张运行时配图合计约1.7MB，共享浏览器缓存，不逐帧绘制或重新下载。
 
 ## 预览与开发
 
@@ -53,5 +61,7 @@ npm test
 npm run check:sprites
 npm run build
 ```
+
+可选真实浏览器布局检查：启动静态服务后运行 `node scripts/check-layout.cjs`。需安装 Playwright / Chromium，或通过 `FARM_PLAYWRIGHT_DEPS`、`FARM_CHROMIUM_PATH` 指定已有运行时；预览地址由 `FARM_PREVIEW_URL` 覆盖。覆盖6种宽度、亮暗两色、5个相关页面，截图保存在忽略提交的 `tests/.artifacts`。
 
 如需检查当前角色卡ZOD，设置 `FARM_ZOD_FILE` 为其 `ZOD.js` 路径后运行测试。该项集成测试未配置时跳过，角色卡文件不包含在本仓库。其余测试使用隔离DOM与IndexedDB，不触碰真实聊天存档。
