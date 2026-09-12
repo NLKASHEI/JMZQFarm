@@ -32,6 +32,26 @@ test('完整装箱流程：取消不扣库存，确认仅转一次，旧变量�
   assert.equal((await env.read()).bag[0].count,count-1);assert.equal(env.variables().stat_data.物品.木材.count,1);
   assert.equal(env.variables().stat_data.物品.旧物.count,1);assert.equal(env.variables().stat_data.核心状态.hp_current,50);assert.equal(env.variables().other,'keep');
 });
+
+test('悬浮入口拖动不误打开、位置保存、普通点击仍可打开',async t=>{
+  const env=await setup(t);env.click('[data-ui="close"]');const b=env.root.querySelector('.bubble');
+  const pointer=(target,type,x,y)=>target.dispatchEvent(new env.w.MouseEvent(type,{bubbles:true,composed:true,clientX:x,clientY:y,button:0,cancelable:true}));
+  pointer(b,'pointerdown',200,300);pointer(env.w.document,'pointermove',30,100);pointer(env.w.document,'pointerup',30,100);b.click();
+  assert.equal(env.root.querySelector('.panel').hidden,true);
+  const saved=JSON.parse(env.w.localStorage.getItem('jmzq_farm_floating_v1_preview'));
+  assert.ok(saved&&saved.bubble.x>=0&&saved.bubble.x<=1&&saved.bubble.y>=0&&saved.bubble.y<=1);
+  pointer(b,'pointerdown',30,100);pointer(env.w.document,'pointerup',30,100);b.click();
+  assert.equal(env.root.querySelector('.panel').hidden,false);
+});
+
+test('移动端页面缓存切回保留入口，真正卸载清理实例',async t=>{
+  const env=await setup(t);env.click('[data-ui="close"]');
+  const event=new env.w.Event('pagehide');Object.defineProperty(event,'persisted',{value:true});env.w.dispatchEvent(event);
+  env.w.dispatchEvent(new env.w.Event('pageshow'));
+  assert.ok(env.w.document.getElementById('jmzq-garden'));assert.equal(env.root.querySelector('.bubble').hidden,false);
+  env.click('.bubble');assert.equal(env.root.querySelector('.panel').hidden,false);
+  env.w.dispatchEvent(new env.w.Event('pagehide'));assert.equal(env.w.document.getElementById('jmzq-garden'),null);
+});
 test('接口写入前拒绝：库存退回，错误在弹窗内可见',async t=>{
   const env=await setup(t);env.mode('fail');env.click('[data-tab="bag"]');const before=await env.read();
   env.click('[data-do="pack"]');await until(()=>env.root.querySelector('dialog').open);env.click('[data-modal="confirm"]');

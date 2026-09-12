@@ -7,12 +7,14 @@
 在酒馆助手脚本编辑器中替换原小农场脚本，不要同时启用新旧两个实例：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.1/farm.min.js';
+import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.2/farm.min.js';
 ```
 
 也可直接复制 `farm.js` 全文。若 testingcf 无法访问，可将脚本地址域名换成 `cdn.jsdelivr.net`。脚本不调用额外模型API，也不依赖字体CDN。
 
 ## 4.3 成就册与布局修复
+
+4.3.2：悬浮“小院”按钮支持鼠标／手指拖动，按屏幕比例记住位置；拖动不误触打开，窗口标题栏也可拖动。默认入口位于右侧中下部，避免占据输入框旁的底部工具栏。旋转、键盘、浏览器工具栏变化时，入口及窗口重新限制在可视区内。修复返回缓存时过早清除入口，避开body主题变换及隐藏的嵌套脚本框架。位置保存在独立本地UI配置，预览和正式环境分开，不改游戏存档。
 
 4.3.1：32项成就已经全部换成各自独立的主题图案，不再按分类重复使用徽章。目标、奖励和历史进度保持不变；可在 [32枚图案总览](preview/achievements.html) 逐个查看。
 
@@ -66,5 +68,7 @@ npm run build
 ```
 
 可选真实浏览器布局检查：启动静态服务后运行 `node scripts/check-layout.cjs`。需安装 Playwright / Chromium，或通过 `FARM_PLAYWRIGHT_DEPS`、`FARM_CHROMIUM_PATH` 指定已有运行时；预览地址由 `FARM_PREVIEW_URL` 覆盖。覆盖6种宽度、亮暗两色、5个相关页面及32项成就的窄屏详情，截图保存在忽略提交的 `tests/.artifacts`。
+
+`node scripts/check-floating.cjs` 使用相同浏览器配置，验证鼠标与真实触摸事件、拖动后的点击抑制、位置恢复、可视区变化、横竖屏、主题变换、返回缓存和隐藏的嵌套脚本框架。不会访问真实玩家聊天。
 
 如需检查当前角色卡ZOD，设置 `FARM_ZOD_FILE` 为其 `ZOD.js` 路径后运行测试。该项集成测试未配置时跳过，角色卡文件不包含在本仓库。其余测试使用隔离DOM与IndexedDB，不触碰真实聊天存档。

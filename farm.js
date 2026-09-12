@@ -1,10 +1,10 @@
-/* 缄默之秋 · 小农场 4.3.1
+/* 缄默之秋 · 小农场 4.3.2
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.3.1';
+  const VERSION = '4.3.2';
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -688,7 +688,15 @@
   // 浏览器界面与持久化实现在下方。
   start().catch(error => { console.error('[小农场]',error); });
   async function start() {
-    const p = (()=>{if(window.__GARDEN_PREVIEW__ === true) return window; try { void window.parent.document.body; return window.parent; } catch { return window; }})();
+    const p = (()=>{
+      if(window.__GARDEN_PREVIEW__===true)return window;
+      let current=window,tavern=null;
+      for(let depth=0;depth<16;depth++){
+        if(current.SillyTavern?.getContext)tavern=current;
+        try {if(current.parent===current)break;void current.parent.document.documentElement;current=current.parent;}catch{break;}
+      }
+      return tavern||current;
+    })();
     const doc = p.document;
     if(!doc.body)await new Promise(resolve=>doc.addEventListener('DOMContentLoaded',resolve,{once:true}));
     const preview = window.__GARDEN_PREVIEW__ === true;
@@ -725,7 +733,7 @@
       return seconds ? (Math.floor(seconds/60) ? Math.floor(seconds/60)+'分' : '') + seconds%60+'秒' : '已完成';
     };
     root.innerHTML = '<style>' + styles() + '</style><div class="garden dark">' +
-      '<button class="bubble" title="打开小农场" aria-label="打开小农场">🌾<span>小院</span></button>' +
+      '<i class="viewport-safe" aria-hidden="true"></i><button class="bubble" title="点击打开，按住拖动" aria-label="打开小农场，可拖动位置">🌾<span>小院</span></button>' +
       '<section class="panel" hidden aria-label="小农场"><header><div class="brand"><span class="mark">畦</span><div><h1>小农场</h1><small>秋日小院 / ' + VERSION + '</small></div></div>' +
       '<div class="wallet"><span>小院币 <b id="coins">—</b></span><span>行动力 <b id="energy">—</b></span></div>' +
       '<div class="header-actions"><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
@@ -733,7 +741,8 @@
       '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span>v' + VERSION + '</span></footer>' +
       '<dialog aria-label="小农场操作"><div class="dialog-head"><h2></h2><button data-ui="dismiss" aria-label="关闭弹窗">×</button></div><div class="dialog-content"></div><p class="dialog-error" role="alert" hidden></p><div class="dialog-actions"></div></dialog></section>' +
       '<div class="toast" role="status" aria-live="polite" hidden></div></div>';
-    doc.body.appendChild(host);
+    // Keep the overlay outside body transforms/filters/overflow used by mobile themes.
+    doc.documentElement.appendChild(host);
     const $ = q => root.querySelector(q);
     const panel = $('.panel'), main = $('main'), dialog = $('dialog');
     const navItems = [['overview','01','小院'],['farm','02','田地'],['ranch','03','牧场'],['fish','04','垂钓'],['explore','05','探索'],['workshop','06','工坊'],['journal','07','手账'],['achievements','08','成就'],['idle','09','值守'],['bag','10','仓库']];
@@ -793,7 +802,74 @@
       const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:clamp(index+(event.key==='ArrowRight'?1:-1),0,buttons.length-1);
       buttons[next].focus({preventScroll:true});buttons[next].click();
     });
-    function resize() { host.style.setProperty('--vh',(p.visualViewport?.height || p.innerHeight)+'px'); updateNavEdges(); }
+    const bubble=$('.bubble'),panelHandle=$('header'),uiKey='jmzq_farm_floating_v1'+(preview?'_preview':'');
+    const floating={bubble:{x:1,y:.65},panel:{x:.5,y:.5}};
+    try{
+      const saved=JSON.parse(p.localStorage.getItem(uiKey));
+      for(const key of ['bubble','panel'])if(Number.isFinite(saved?.[key]?.x)&&Number.isFinite(saved?.[key]?.y))floating[key]={x:clamp(saved[key].x,0,1),y:clamp(saved[key].y,0,1)};
+    }catch{ /* Storage restrictions must not hide the launcher. */ }
+    let floatingDrag=null,floatingFrame=0,floatingObserver=null,bubbleClickBlocked=false,bubbleClickTimer=0;
+    function saveFloating(){try{p.localStorage.setItem(uiKey,JSON.stringify(floating));}catch{}}
+    function viewport(){
+      const v=p.visualViewport;
+      return {x:Math.max(0,Number(v?.offsetLeft)||0),y:Math.max(0,Number(v?.offsetTop)||0),width:Math.max(1,Number(v?.width)||p.innerWidth||doc.documentElement.clientWidth||320),height:Math.max(1,Number(v?.height)||p.innerHeight||doc.documentElement.clientHeight||600)};
+    }
+    function floatBounds(element){
+      const v=viewport(),safe=p.getComputedStyle($('.viewport-safe')),rect=element.getBoundingClientRect();
+      const left=v.x+8+(parseFloat(safe.paddingLeft)||0),top=v.y+8+(parseFloat(safe.paddingTop)||0);
+      return {left,top,width:Math.max(0,v.width-16-(parseFloat(safe.paddingLeft)||0)-(parseFloat(safe.paddingRight)||0)-(rect.width||element.offsetWidth||88)),height:Math.max(0,v.height-16-(parseFloat(safe.paddingTop)||0)-(parseFloat(safe.paddingBottom)||0)-(rect.height||element.offsetHeight||46))};
+    }
+    function placeFloating(element,key){
+      if(element.hidden)return;
+      const b=floatBounds(element),pos=floating[key];
+      element.style.left=(b.left+pos.x*b.width)+'px';element.style.top=(b.top+pos.y*b.height)+'px';
+      element.style.right='auto';element.style.bottom='auto';element.style.transform='none';
+    }
+    function layoutFloating(){
+      floatingFrame=0;if(!alive)return;
+      const v=viewport(),safe=p.getComputedStyle($('.viewport-safe'));
+      host.style.setProperty('--vh',Math.max(1,v.height-(parseFloat(safe.paddingTop)||0)-(parseFloat(safe.paddingBottom)||0))+'px');
+      host.style.setProperty('--vw',Math.max(1,v.width-(parseFloat(safe.paddingLeft)||0)-(parseFloat(safe.paddingRight)||0))+'px');
+      if(!floatingDrag){placeFloating(bubble,'bubble');placeFloating(panel,'panel');}
+      updateNavEdges();
+    }
+    function resize(){if(!floatingFrame)floatingFrame=p.requestAnimationFrame(layoutFloating);}
+    function blockBubbleClick(){bubbleClickBlocked=true;clearTimeout(bubbleClickTimer);bubbleClickTimer=setTimeout(()=>{bubbleClickBlocked=false;},500);}
+    function startFloating(event,key){
+      if(event.isPrimary===false||event.button>0||floatingDrag)return;
+      if(key==='panel'&&event.target.closest('button,input,select,textarea,a'))return;
+      const element=key==='bubble'?bubble:panel,handle=key==='bubble'?bubble:panelHandle;
+      bubbleClickBlocked=false;clearTimeout(bubbleClickTimer);
+      const rect=element.getBoundingClientRect();
+      floatingDrag={key,element,handle,id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,moved:false};
+      try{handle.setPointerCapture?.(event.pointerId);}catch{}
+    }
+    function moveFloating(event){
+      const d=floatingDrag;if(!d||event.pointerId!==d.id)return;
+      const dx=event.clientX-d.x,dy=event.clientY-d.y;
+      if(!d.moved&&Math.hypot(dx,dy)<6)return;
+      d.moved=true;d.handle.classList.add('floating-dragging');if(event.cancelable)event.preventDefault();
+      const b=floatBounds(d.element),left=clamp(d.left+dx,b.left,b.left+b.width),top=clamp(d.top+dy,b.top,b.top+b.height);
+      // Keep a remembered axis when the full-size panel has no room to move on it.
+      if(b.width)floating[d.key].x=(left-b.left)/b.width;
+      if(b.height)floating[d.key].y=(top-b.top)/b.height;
+      d.element.style.left=left+'px';d.element.style.top=top+'px';d.element.style.right='auto';d.element.style.bottom='auto';d.element.style.transform='none';
+    }
+    function finishFloating(event){
+      const d=floatingDrag;if(!d||(event?.pointerId!=null&&event.pointerId!==d.id))return;
+      floatingDrag=null;d.handle.classList.remove('floating-dragging');
+      if(d.key==='bubble'&&(d.moved||event?.type==='pointercancel'))blockBubbleClick();
+      try{if(d.handle.hasPointerCapture?.(d.id))d.handle.releasePointerCapture(d.id);}catch{}
+      if(d.moved)saveFloating();resize();
+    }
+    bubble.addEventListener('pointerdown',event=>startFloating(event,'bubble'));
+    panelHandle.addEventListener('pointerdown',event=>startFloating(event,'panel'));
+    for(const handle of [bubble,panelHandle])handle.addEventListener('lostpointercapture',finishFloating);
+    bubble.addEventListener('click',event=>{if(bubbleClickBlocked){event.preventDefault();event.stopPropagation();}},true);
+    bubble.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){bubbleClickBlocked=false;clearTimeout(bubbleClickTimer);}});
+    doc.addEventListener('pointermove',moveFloating,{capture:true,passive:false});
+    doc.addEventListener('pointerup',finishFloating,true);doc.addEventListener('pointercancel',finishFloating,true);p.addEventListener('blur',finishFloating);
+    if(typeof p.ResizeObserver==='function'){floatingObserver=new p.ResizeObserver(resize);floatingObserver.observe(bubble);floatingObserver.observe(panel);}
     if(typeof p.ResizeObserver==='function'){navObserver=new p.ResizeObserver(updateNavEdges);navObserver.observe(nav);}
     // Failed image providers are skipped on subsequent renders; a full outage leaves usable text controls.
     root.addEventListener('error',event=>{
@@ -803,21 +879,28 @@
       if(next<artBases.length){img.dataset.provider=String(next);img.src=artBases[next]+name+'.webp';}
       else {img.removeAttribute('src');img.hidden=true;(img.closest('.scene-tile,.sprite,.medal,.map-art')||img.parentElement).classList.add('asset-missing');}
     },true);
-    resize(); p.addEventListener('resize',resize); p.visualViewport?.addEventListener('resize',resize);
+    layoutFloating();p.addEventListener('resize',resize);p.visualViewport?.addEventListener('resize',resize);p.visualViewport?.addEventListener('scroll',resize);
+    function floatingPageShow(){resize();}
+    function floatingVisibility(){if(!doc.hidden)resize();}
+    function pageHide(event){if(event.persisted){finishFloating();releaseFish();fishPaused=!!liveFish;flushFish();}else cleanup();}
+    p.addEventListener('pageshow',floatingPageShow);doc.addEventListener('visibilitychange',floatingVisibility);
     function cleanup() {
       alive = false; clearInterval(interval); clearTimeout(navClickTimer);navObserver?.disconnect();p.cancelAnimationFrame(fishFrame);
-      p.removeEventListener('resize',resize); p.visualViewport?.removeEventListener('resize',resize);
+      finishFloating();floatingObserver?.disconnect();p.cancelAnimationFrame(floatingFrame);clearTimeout(bubbleClickTimer);
+      doc.removeEventListener('pointermove',moveFloating,true);doc.removeEventListener('pointerup',finishFloating,true);doc.removeEventListener('pointercancel',finishFloating,true);p.removeEventListener('blur',finishFloating);
+      p.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('scroll',resize);
+      p.removeEventListener('pageshow',floatingPageShow);doc.removeEventListener('visibilitychange',floatingVisibility);
       subscriptions.forEach(([em,name,fn])=>em.removeListener?.(name,fn));
       clearTimeout(toast.timer); if(dialog.open) dialog.close(); host.remove();
       if(db) db.close();
       if(p._farmCleanup === cleanup) delete p._farmCleanup;
       if(window._farmCleanup === cleanup) delete window._farmCleanup;
-      window.removeEventListener('pagehide',cleanup);
+      window.removeEventListener('pagehide',pageHide);
       p.removeEventListener('blur',releaseFish);doc.removeEventListener('pointerup',releaseFish);doc.removeEventListener('pointercancel',releaseFish);
       doc.removeEventListener('keydown',fishKeyDown);doc.removeEventListener('keyup',fishKeyUp);doc.removeEventListener('visibilitychange',visibilityFish);
     }
     p._farmCleanup = window._farmCleanup = cleanup;
-    window.addEventListener('pagehide',cleanup);
+    window.addEventListener('pagehide',pageHide);
     const ctx = () => p.SillyTavern?.getContext?.() || window.SillyTavern?.getContext?.();
     function attachEvents() {
       const context = ctx(), emitter = context?.eventSource, types = context?.eventTypes || {};
@@ -875,8 +958,8 @@
       const el = $('.toast'); el.textContent = text; el.classList.toggle('error',error); el.hidden = false;
       clearTimeout(toast.timer); toast.timer = setTimeout(()=>{el.hidden=true;},4500);
     }
-    function showPanel() { panel.hidden = false; $('.bubble').hidden = true; if(state) {render(false);if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
-    function hidePanel() { dismiss(); releaseFish();fishPaused=!!liveFish;flushFish();panel.hidden = true; $('.bubble').hidden = false; p.cancelAnimationFrame(fishFrame); }
+    function showPanel() { finishFloating();panel.hidden = false;bubble.hidden = true;layoutFloating();if(state) {render(false);if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
+    function hidePanel() { finishFloating();dismiss();releaseFish();fishPaused=!!liveFish;flushFish();panel.hidden = true;bubble.hidden = false;layoutFloating();bubble.focus({preventScroll:true});p.cancelAnimationFrame(fishFrame); }
     function dismiss() { if(dialog.open) dialog.close(); dialogCallback = null; lastFocus?.focus?.({preventScroll:true}); }
     function modal(title,body,buttons,callback) {
       lastFocus = root.activeElement;
@@ -1390,8 +1473,10 @@ button,input{font:inherit}button{cursor:pointer;border:1px solid var(--line);bac
 button:hover{border-color:var(--accent);background:var(--accent-bg)}button:disabled{opacity:.42;cursor:not-allowed}button.primary{color:var(--ink);background:var(--accent);border-color:var(--accent);font-weight:700}
 button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button.selected{border-color:var(--accent);background:var(--accent-bg);box-shadow:inset 0 0 0 1px var(--accent)}
-.bubble{position:fixed;right:18px;bottom:18px;pointer-events:auto;display:flex;align-items:center;gap:8px;border-color:var(--accent);background:var(--panel);box-shadow:0 6px 24px #0005;padding:10px 14px}
-.panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1180px,calc(100% - 24px));height:min(850px,calc(var(--vh,100vh) - 24px));display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;pointer-events:auto;box-shadow:0 18px 70px #0007;container:garden / inline-size}
+.viewport-safe{position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+.bubble{position:fixed;right:18px;top:65%;pointer-events:auto;display:flex;align-items:center;gap:8px;border-color:var(--accent);background:var(--panel);box-shadow:0 6px 24px #0005;padding:10px 14px;min-width:76px;min-height:44px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:grab;z-index:2}
+.panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1180px,calc(var(--vw,100vw) - 24px));height:min(850px,calc(var(--vh,100vh) - 24px));display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;pointer-events:auto;box-shadow:0 18px 70px #0007;container:garden / inline-size}
+header{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}.floating-dragging{cursor:grabbing!important;transition:none!important}
 header{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}.mark{display:grid;place-items:center;width:37px;height:37px;color:var(--accent);border:1px solid var(--accent);background:var(--accent-bg);border-radius:8px;font:24px/1 serif}.brand small{font-size:10px;letter-spacing:.08em}
 .wallet{display:flex;gap:22px;margin-left:auto;color:var(--muted);font-size:11px}.wallet span{display:flex;align-items:baseline;gap:8px}.wallet b{font-size:17px;color:var(--text);font-variant-numeric:tabular-nums}.header-actions{display:flex;gap:6px}.header-actions button{width:32px;min-height:32px;padding:3px;font-size:20px}
@@ -1495,7 +1580,7 @@ footer{padding:5px 10px;font-size:9px}summary{font-size:12px}summary small{font-
 @container garden (max-width:480px){main[data-page="farm"] .selection-panel>.actions,main[data-page="ranch"] .selection-panel>.actions{max-width:88px}main[data-page="farm"] .selection-panel>.actions button,main[data-page="ranch"] .selection-panel>.actions button{font-size:11px;padding:7px 8px}main[data-page="farm"] .selection-title p,main[data-page="ranch"] .selection-title p{display:none}main[data-page="ranch"] .selection-panel>.actions{gap:4px}main[data-page="ranch"] .danger-zone small{font-size:9px}.map-art{max-height:none}}
 @container garden (max-width:340px){.brand .mark{display:none}.wallet{gap:8px}.overview-heading h2{font-size:14px}.weather-tag{font-size:9px}.map-pin small{display:none}.map-pin{min-height:32px;min-width:39px;padding:4px 6px}.land-tile .sprite{width:35px;height:35px}.land-tile{min-height:89px}.recipe-option .item-symbol{width:24px;height:24px}.stock-tile .sprite{width:34px;height:34px}}
 @container garden (max-width:720px){.pond-scene{aspect-ratio:9/4}}
-@media(max-width:600px){.panel{width:calc(100% - 8px);height:calc(var(--vh,100vh) - 8px);border-radius:9px}.bubble{right:10px;bottom:10px}}
+@media(max-width:600px){.panel{width:calc(var(--vw,100vw) - 16px);height:calc(var(--vh,100vh) - 16px);border-radius:9px}.bubble{padding:9px 12px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 `;
     }
