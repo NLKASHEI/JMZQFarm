@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小农场模拟场景</title><style>body{margin:0;background:#101217;color:#b0b4bd;font:14px system-ui}p{padding:20px}</style></head><body><p>右下角「小院」可重新展开。此页为独立模拟环境。</p>
+<script>
+window.__GARDEN_PREVIEW__=true;
+window.__GARDEN_ASSET_BASE__='../assets/v4.2/';
+let mode='ok';
+let variables;
+try{variables=JSON.parse(localStorage.getItem('garden-preview-backpack-v4'));}catch{}
+variables ||= {stat_data:{物品:{'旧水壶':{emoji:'🫙',count:1,quality:'普通',weight:.4,condition:80,category:'工具零件',detail:'模拟角色已有物品，装箱不应覆盖。'}},核心状态:{hp_current:80}},preview:true};
+const publish=()=>{localStorage.setItem('garden-preview-backpack-v4',JSON.stringify(variables));parent.postMessage({type:'farm-preview-bag',variables},location.origin);};
+window.addEventListener('message',e=>{if(e.source===parent&&e.origin===location.origin&&e.data?.type==='farm-preview-mode')mode=e.data.mode;});
+const context={chat:[{mes:'仅供小农场预览的模拟正文。',is_user:false,swipe_id:0}],name1:'测试幸存者',characterId:'garden-preview',getCurrentChatId:()=> '小院测试存档',eventSource:{on(){},removeListener(){}}};
+window.SillyTavern={getContext:()=>context};
+window.Mvu={isDuringExtraAnalysis:()=>mode==='mvu'};
+window.TavernHelper={getVariables:()=>structuredClone(variables),updateVariablesWith(updater){
+  if(mode==='fail')throw new Error('模拟写入失败：背包未修改');
+  variables=updater(structuredClone(variables));publish();
+  if(mode==='after')throw new Error('模拟回执失败：背包其实已写入，请核对收据');
+  return variables;
+}};
+publish();
+</script><script src="../farm.js?v=4.2.0-atlas2"></script></body></html>
