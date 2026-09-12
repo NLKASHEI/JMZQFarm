@@ -7,12 +7,14 @@
 在酒馆助手脚本编辑器中替换原小农场脚本，不要同时启用新旧两个实例：
 
 ```js
-import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.0/farm.min.js';
+import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.1/farm.min.js';
 ```
 
 也可直接复制 `farm.js` 全文。若 testingcf 无法访问，可将脚本地址域名换成 `cdn.jsdelivr.net`。脚本不调用额外模型API，也不依赖字体CDN。
 
 ## 4.3 成就册与布局修复
+
+4.3.1：32项成就已经全部换成各自独立的主题图案，不再按分类重复使用徽章。目标、奖励和历史进度保持不变；可在 [32枚图案总览](preview/achievements.html) 逐个查看。
 
 - 新增独立成就 TAB：32项、六类收藏徽章，分类筛选，每页最多6项，进度与奖励逐项列出。
 - 每项都有固定的小院币和物品奖励；已领取不可重复领取。旧版11项成就的ID、奖励及领奖记录保持不变。
@@ -49,7 +51,7 @@ import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.0/farm.min.js';
 
 界面只请求 `assets/v4.2` 中的 WebP。图片地址固定到不可变提交，依次尝试 testingcf.jsdelivr、cdn.jsdelivr、GitHub原始文件。图片不可访问时保留文字和操作；首次离线不保证有配图。
 
-生成原稿PNG、提示词、图集采样坐标见 [assets/ARTWORK.md](assets/ARTWORK.md) 与 [成就徽章提示词](assets/ACHIEVEMENTS.md)。当前实际使用 `sprites-v2.webp`；首版仅留作历史原稿。含徽章的四张运行时配图合计约1.7MB，共享浏览器缓存，不逐帧绘制或重新下载。
+生成原稿PNG、提示词、图集采样坐标见 [assets/ARTWORK.md](assets/ARTWORK.md) 与 [32枚独立徽章提示词](assets/ACHIEVEMENTS-32.md)。当前使用 `sprites-v2.webp` 与 `achievement-a/b/c/d.webp`，旧 `medals.webp` 只保留历史原稿、不再加载。七张运行时配图合计约2.6MB，按页面需要加载，共享缓存，不逐帧绘制或重新下载。
 
 ## 预览与开发
 
@@ -59,9 +61,10 @@ import 'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@v4.3.0/farm.min.js';
 npm ci
 npm test
 npm run check:sprites
+node scripts/check-achievement-art.cjs
 npm run build
 ```
 
-可选真实浏览器布局检查：启动静态服务后运行 `node scripts/check-layout.cjs`。需安装 Playwright / Chromium，或通过 `FARM_PLAYWRIGHT_DEPS`、`FARM_CHROMIUM_PATH` 指定已有运行时；预览地址由 `FARM_PREVIEW_URL` 覆盖。覆盖6种宽度、亮暗两色、5个相关页面，截图保存在忽略提交的 `tests/.artifacts`。
+可选真实浏览器布局检查：启动静态服务后运行 `node scripts/check-layout.cjs`。需安装 Playwright / Chromium，或通过 `FARM_PLAYWRIGHT_DEPS`、`FARM_CHROMIUM_PATH` 指定已有运行时；预览地址由 `FARM_PREVIEW_URL` 覆盖。覆盖6种宽度、亮暗两色、5个相关页面及32项成就的窄屏详情，截图保存在忽略提交的 `tests/.artifacts`。
 
 如需检查当前角色卡ZOD，设置 `FARM_ZOD_FILE` 为其 `ZOD.js` 路径后运行测试。该项集成测试未配置时跳过，角色卡文件不包含在本仓库。其余测试使用隔离DOM与IndexedDB，不触碰真实聊天存档。

@@ -1,10 +1,10 @@
-/* 缄默之秋 · 小农场 4.3.0
+/* 缄默之秋 · 小农场 4.3.1
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.3.0';
+  const VERSION = '4.3.1';
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -169,15 +169,24 @@
     {id:'idle_home',name:'有人照看的家',desc:'建成离线值守岗',value:s=>Number(s.idle.built),target:1,coins:50,items:{'温室营养液':1,'高能精饲料':1}},
   ];
   const ACHIEVEMENT_CATEGORIES = [
-    {id:'farm',name:'种植',medal:0,goals:['first_harvest','harvest_25','harvest_100','crop_catalog','harvest_500']},
-    {id:'ranch',name:'牧场',medal:1,goals:['ranch_1','ranch_30','ranch_100','ranch_300']},
-    {id:'fish',name:'垂钓',medal:2,goals:['fish_1','perfect_1','fish_25','treasure_3','heavy_fish','perfect_10','fish_100','fish_master']},
-    {id:'explore',name:'探索',medal:3,goals:['explore_1','explore_5','explorer_20','new_world','explore_60','discovery_all']},
-    {id:'craft',name:'工坊',medal:4,goals:['craft_1','crafter_15','craft_50','craft_150']},
-    {id:'home',name:'经营',medal:5,goals:['collector','idle_home','all_rounder','level_15','projects_3']},
+    {id:'farm',name:'种植',goals:['first_harvest','harvest_25','harvest_100','crop_catalog','harvest_500']},
+    {id:'ranch',name:'牧场',goals:['ranch_1','ranch_30','ranch_100','ranch_300']},
+    {id:'fish',name:'垂钓',goals:['fish_1','perfect_1','fish_25','treasure_3','heavy_fish','perfect_10','fish_100','fish_master']},
+    {id:'explore',name:'探索',goals:['explore_1','explore_5','explorer_20','new_world','explore_60','discovery_all']},
+    {id:'craft',name:'工坊',goals:['craft_1','crafter_15','craft_50','craft_150']},
+    {id:'home',name:'经营',goals:['collector','idle_home','all_rounder','level_15','projects_3']},
   ];
+  // Explicit stable IDs: changing category order must never assign another achievement's illustration.
+  const ACHIEVEMENT_ART = Object.fromEntries([
+    ['achievement-a',['first_harvest','harvest_25','harvest_100','crop_catalog','harvest_500','ranch_1','ranch_30','ranch_100']],
+    ['achievement-b',['ranch_300','fish_1','perfect_1','fish_25','treasure_3','heavy_fish','perfect_10','fish_100']],
+    ['achievement-c',['fish_master','explore_1','explore_5','explorer_20','new_world','explore_60','discovery_all','craft_1']],
+    ['achievement-d',['crafter_15','craft_50','craft_150','collector','idle_home','all_rounder','level_15','projects_3']],
+  ].flatMap(([sheet,ids])=>ids.map((id,cell)=>[id,{sheet,cell}])));
+  // Actual atlas is 1774x887: shift this sample up 8px to preserve the scale's top loop.
+  ACHIEVEMENT_ART.heavy_fish.offsetY=-8/(887/2);
   for(const category of ACHIEVEMENT_CATEGORIES) category.goals.forEach((id,index)=>{
-    const goal=MILESTONES.find(g=>g.id===id);goal.category=category.id;goal.medal=category.medal;goal.sequence=index+1;
+    const goal=MILESTONES.find(g=>g.id===id);goal.category=category.id;goal.sequence=index+1;
   });
   function milestoneStatus(s,g) {
     const value=Math.max(0,Number(g.value(s))||0),claimed=s.claimedMilestones.includes(g.id);
@@ -673,7 +682,7 @@
     next[RECEIPTS] = {...receipts,[pending.id]:{name,count:item.count,at:pending.at}};
     return {variables:next,duplicate:false,name};
   }
-  const Core = {VERSION,KEY,RECEIPTS,CROPS,ANIMALS,FISH,ITEMS,RECIPES,ZONES,STANCES,UPGRADES,WEATHER,RODS,BAITS,SPOTS,TALENTS,MILESTONES,ACHIEVEMENT_CATEGORIES,milestoneStatus,PROJECTS,ENCOUNTERS,
+  const Core = {VERSION,KEY,RECEIPTS,CROPS,ANIMALS,FISH,ITEMS,RECIPES,ZONES,STANCES,UPGRADES,WEATHER,RODS,BAITS,SPOTS,TALENTS,MILESTONES,ACHIEVEMENT_CATEGORIES,ACHIEVEMENT_ART,milestoneStatus,PROJECTS,ENCOUNTERS,
     makeState,tick,dayKey,weather,action,makeFishEngine,stepFish,settleIdle,talentPoints,migrate,reserve,mergeReward,finishTransfer,restoreTransfer,itemPayload,available,consume,clone,hash};
   if(typeof window === 'undefined' && typeof module !== 'undefined' && module.exports) { module.exports = Core; return; }
   // 浏览器界面与持久化实现在下方。
@@ -685,7 +694,7 @@
     const preview = window.__GARDEN_PREVIEW__ === true;
     const stateKey = preview ? KEY + '_preview' : KEY;
     // Art is pinned independently of script releases; preview resolves the same files locally.
-    const ART_REV = '0976c09196e1df8fe9634090b683c6dcffc812fd';
+    const ART_REV = '95b9d96b7ff99c717135f6024f4f1b8190d26d01';
     const artBases = [
       'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@'+ART_REV+'/assets/v4.2/',
       'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@'+ART_REV+'/assets/v4.2/',
@@ -1119,8 +1128,9 @@
         '<section class="card project-card">'+projectHtml+'</section>'+
         '<section class="card achievement-link"><div><h3>小院成就册 · '+MILESTONES.filter(g=>milestoneStatus(state,g).claimed).length+' / '+MILESTONES.length+'</h3><p>六类收藏徽章，每项成绩都有独立奖励。</p></div><button data-tab="achievements">翻开成就册 ›</button></section>'+section('路上的发现 · '+state.discoveries.length+' 处','<div class="tags">'+(state.discoveries.length?state.discoveries.map(n=>'<span>⌖ '+e(n)+'</span>').join(''):'<p>在探索途中做出选择，会逐渐记录新的地点。</p>')+'</div>');
     }
-    function medal(index,extra='') {
-      return '<span class="medal '+extra+'" style="--mx:'+index%3+';--my:'+Math.floor(index/3)+'" aria-hidden="true">'+artImage('medals')+'</span>';
+    function medal(goal,extra='') {
+      const {sheet,cell,offsetY=0}=ACHIEVEMENT_ART[goal.id];
+      return '<span class="medal '+extra+'" data-art-goal="'+goal.id+'" style="--mx:'+cell%4+';--my:'+(Math.floor(cell/4)+offsetY)+'" aria-hidden="true">'+artImage(sheet)+'</span>';
     }
     function achievementsPage() {
       const ordered=ACHIEVEMENT_CATEGORIES.flatMap(c=>c.goals.map(id=>MILESTONES.find(g=>g.id===id)));
@@ -1136,13 +1146,13 @@
       const valueLabel=(g,s)=>Number(s.progress.toFixed(2))+' / '+g.target+(g.unit?' '+g.unit:'');
       const cards=visible.map(g=>{
         const s=milestoneStatus(state,g),selected=g.id===view.achievement;
-        return '<button class="achievement-card '+(s.claimed?'claimed':s.ready?'ready':'')+' '+(selected?'selected':'')+'" data-do="select-achievement" data-id="'+g.id+'" aria-pressed="'+selected+'">'+medal(g.medal)+'<span class="achievement-copy"><span class="achievement-title"><b>'+g.name+'</b><small>'+statusLabel(s)+'</small></span><span class="achievement-goal">'+g.desc+'</span><span class="achievement-progress">'+valueLabel(g,s)+'</span>'+progress(s.progress/g.target*100)+'<span class="achievement-prize">'+g.coins+' 币 · '+Object.entries(g.items).map(([n,c])=>n+' ×'+c).join('、')+'</span></span></button>';
+        return '<button class="achievement-card '+(s.claimed?'claimed':s.ready?'ready':'')+' '+(selected?'selected':'')+'" data-do="select-achievement" data-id="'+g.id+'" aria-pressed="'+selected+'">'+medal(g)+'<span class="achievement-copy"><span class="achievement-title"><b>'+g.name+'</b><small>'+statusLabel(s)+'</small></span><span class="achievement-goal">'+g.desc+'</span><span class="achievement-progress">'+valueLabel(g,s)+'</span>'+progress(s.progress/g.target*100)+'<span class="achievement-prize">'+g.coins+' 币 · '+Object.entries(g.items).map(([n,c])=>n+' ×'+c).join('、')+'</span></span></button>';
       }).join('');
       let detail='<aside class="card achievement-detail"><h3>这一页的奖励已收好</h3><p>切换分类，看看下一枚徽章。</p></aside>';
       if(goal){
         const s=milestoneStatus(state,goal),category=ACHIEVEMENT_CATEGORIES.find(c=>c.id===goal.category);
         const requirements=goal.id==='all_rounder'?'<div class="achievement-requirements">'+[['等级',state.level,8],['作物',state.stats.harvest,30],['畜牧',state.stats.ranch,30],['渔获',state.stats.fish,30]].map(([n,v,t])=>'<span>'+n+' '+Math.min(v,t)+'/'+t+'</span>').join('')+'</div>':'';
-        detail='<aside class="card achievement-detail" data-achievement="'+goal.id+'"><div class="achievement-detail-head">'+medal(goal.medal,'medal-large')+'<div><small>'+category.name+'收藏 · '+String(goal.sequence).padStart(2,'0')+'</small><h3>'+goal.name+'</h3><span class="pill">'+statusLabel(s)+'</span></div></div><p>'+goal.desc+'</p>'+requirements+'<div class="achievement-detail-progress"><b>'+valueLabel(goal,s)+'</b>'+progress(s.progress/goal.target*100)+'</div><div class="achievement-rewards"><div><b>'+goal.coins+' 小院币</b><small>小院经营货币</small></div>'+Object.entries(goal.items).map(([name,count])=>'<div><b>'+name+' ×'+count+'</b><small>'+(ITEMS[name].transferable?'实体物资 · 可手动装箱':'经营补给 · 仅在小院使用')+'</small></div>').join('')+'</div>'+button('milestone',s.claimed?'奖励已领取':s.ready?'领取这项奖励':'达成目标后领取','data-id="'+goal.id+'"',!s.ready,true)+'</aside>';
+        detail='<aside class="card achievement-detail" data-achievement="'+goal.id+'"><div class="achievement-detail-head">'+medal(goal,'medal-large')+'<div><small>'+category.name+'收藏 · '+String(goal.sequence).padStart(2,'0')+'</small><h3>'+goal.name+'</h3><span class="pill">'+statusLabel(s)+'</span></div></div><p>'+goal.desc+'</p>'+requirements+'<div class="achievement-detail-progress"><b>'+valueLabel(goal,s)+'</b>'+progress(s.progress/goal.target*100)+'</div><div class="achievement-rewards"><div><b>'+goal.coins+' 小院币</b><small>小院经营货币</small></div>'+Object.entries(goal.items).map(([name,count])=>'<div><b>'+name+' ×'+count+'</b><small>'+(ITEMS[name].transferable?'实体物资 · 可手动装箱':'经营补给 · 仅在小院使用')+'</small></div>').join('')+'</div>'+button('milestone',s.claimed?'奖励已领取':s.ready?'领取这项奖励':'达成目标后领取','data-id="'+goal.id+'"',!s.ready,true)+'</aside>';
       }
       return heading('小院成就册','每一点经营，都值得留下一枚纪念。')+'<div class="achievement-summary"><span><b>'+claimed+'</b> / '+ordered.length+' 已领取</span><span><b>'+ready+'</b> 项奖励待领取</span><small>旧版领奖记录已保留</small></div><div class="achievement-filters" aria-label="成就分类">'+filters.map(([id,name,count])=>'<button data-do="achievement-filter" data-id="'+id+'" class="'+(id===filter?'selected':'')+'" aria-pressed="'+(id===filter)+'">'+name+' <small>'+count+'</small></button>').join('')+'</div><div class="achievement-layout"><section class="achievement-browser"><div class="achievement-grid">'+(cards||'<div class="card"><h3>暂时没有待领奖励</h3><p>继续照料小院，新的成绩会自动记录。</p></div>')+'</div><div class="achievement-pagination">'+button('achievement-page','‹ 上一页','data-index="'+(view.achievementPage-1)+'"',!view.achievementPage)+'<span>'+(view.achievementPage+1)+' / '+pages+' 页</span>'+button('achievement-page','下一页 ›','data-index="'+(view.achievementPage+1)+'"',view.achievementPage>=pages-1)+'</div></section>'+detail+'</div><div class="note">每项奖励只能领取一次，先进入小院仓库；实体物资可到仓库手动装入角色背包。不会自动改动正文变量。</div>';
     }
@@ -1413,7 +1423,7 @@ footer{display:flex;justify-content:space-between;align-items:center;gap:12px;pa
 @supports(width:1cqw){.scene-art{width:max(100cqw,225cqh)}}
 .nav-count{font:10px/1.4 system-ui;padding:1px 5px;border-radius:9px;color:var(--ink);background:var(--accent)}
 .medal{display:block;position:relative;flex:0 0 auto;width:54px;height:54px;overflow:hidden;background:#e8dfcf;border:1px solid #bba787;border-radius:12px;isolation:isolate}
-.medal img{position:absolute;width:300%;height:200%;max-width:none;left:calc(var(--mx)*-100%);top:calc(var(--my)*-100%);display:block}.medal-large{width:88px;height:88px;border-radius:17px}.medal.asset-missing::after,.medal:has(img[hidden])::after{content:"章";position:absolute;inset:0;display:grid;place-items:center;color:#785a3a;font-size:24px}
+.medal img{position:absolute;width:400%;height:200%;max-width:none;left:calc(var(--mx)*-100%);top:calc(var(--my)*-100%);display:block}.medal-large{width:88px;height:88px;border-radius:17px}.medal.asset-missing::after,.medal:has(img[hidden])::after{content:"章";position:absolute;inset:0;display:grid;place-items:center;color:#785a3a;font-size:24px}
 .achievement-summary,.achievement-link{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.achievement-summary{padding:10px 14px;border:1px solid var(--line);background:var(--panel);border-radius:8px;color:var(--muted)}.achievement-summary b{color:var(--accent);font-size:20px}.achievement-link p{font-size:12px}
 .achievement-filters{display:flex;flex-wrap:wrap;gap:6px}.achievement-filters button{min-height:32px;padding:5px 10px;font-size:12px}.achievement-filters small{margin-left:3px}
 .achievement-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;align-items:start;gap:14px}.achievement-browser{min-width:0}.achievement-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;align-items:stretch}

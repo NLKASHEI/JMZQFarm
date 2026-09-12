@@ -36,6 +36,18 @@ test('32项成就都有唯一分类、可达目标、有效奖励；每项只发
   }
 });
 
+test('32个成就一对一匹配32枚独立图案，不复用分类图标',()=>{
+  const art=C.ACHIEVEMENT_ART,used=new Set();
+  assert.equal(Object.keys(art).length,32);
+  for(const goal of C.MILESTONES){
+    const entry=art[goal.id];assert.ok(entry,goal.id);
+    assert.match(entry.sheet,/^achievement-[a-d]$/);
+    assert.ok(Number.isInteger(entry.cell)&&entry.cell>=0&&entry.cell<8);
+    const key=entry.sheet+'/'+entry.cell;assert.equal(used.has(key),false,goal.id+' 重用了图案 '+key);used.add(key);
+  }
+  assert.equal(used.size,32);
+});
+
 test('成就精确阈值、鱼类记录对象、复合条件和旧领奖兼容',()=>{
   const s=state(),heavy=C.MILESTONES.find(g=>g.id==='heavy_fish'),all=C.MILESTONES.find(g=>g.id==='all_rounder');
   s.fishBook.heaviest={name:'鲟鱼',weight:3.99};assert.equal(C.milestoneStatus(s,heavy).ready,false);

@@ -84,6 +84,25 @@ test('成就筛选分页与选中同步，领奖仅入小院；领取后空页�
   assert.equal(env.root.querySelector('[data-do="milestone"]').disabled,true);
 });
 
+test('每项成就卡片和详情使用同一专属图案，32项彼此不重样',async t=>{
+  const env=await setup(t),seen=new Set();env.click('[data-tab="achievements"]');
+  for(const category of C.ACHIEVEMENT_CATEGORIES){
+    env.click('[data-do="achievement-filter"][data-id="'+category.id+'"]');
+    for(let page=0;page<Math.ceil(category.goals.length/6);page++){
+      if(page)env.click('[data-do="achievement-page"][data-index="'+page+'"]');
+      const ids=[...env.root.querySelectorAll('.achievement-card')].map(b=>b.dataset.id);
+      for(const id of ids){
+        env.click('[data-do="select-achievement"][data-id="'+id+'"]');
+        const art=C.ACHIEVEMENT_ART[id],nodes=env.root.querySelectorAll('.medal[data-art-goal="'+id+'"]');
+        assert.equal(nodes.length,2);
+        for(const node of nodes){assert.equal(node.querySelector('img').dataset.asset,art.sheet);assert.equal(node.style.getPropertyValue('--mx'),String(art.cell%4));assert.equal(node.style.getPropertyValue('--my'),String(Math.floor(art.cell/4)+(art.offsetY||0)));}
+        seen.add(id);
+      }
+    }
+  }
+  assert.equal(seen.size,32);
+});
+
 test('长按与释放驱动追鱼，暂停不丢失进度且不继续下坠',async t=>{
   const env=await setup(t);env.click('[data-tab="fish"]');env.click('[data-do="cast"]');
   await until(async()=>!!(await env.read()).fishing);

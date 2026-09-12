@@ -48,6 +48,7 @@ const out=path.resolve(__dirname,'../tests/.artifacts');fs.mkdirSync(out,{recurs
         const ids=await page.locator('.achievement-card').evaluateAll(els=>els.map(e=>e.dataset.id));
         for(const id of ids){
           await page.locator('[data-do="select-achievement"][data-id="'+id+'"]').click();
+          await page.locator('.achievement-detail .medal img').evaluate(img=>img.decode());
           const problems=await page.locator('.achievement-detail').evaluate(detail=>{
             const r=e=>e.getBoundingClientRect(),a=r(detail.querySelector('.achievement-rewards')),b=r(detail.querySelector('[data-do="milestone"]'));
             return [...detail.querySelectorAll('p,h3,b,small,button')].filter(e=>e.scrollWidth>e.clientWidth+2).map(e=>e.textContent).concat(a.bottom>b.top+1?['reward overlaps button']:[]);
