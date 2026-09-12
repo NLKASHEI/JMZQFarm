@@ -1,10 +1,10 @@
-/* 缄默之秋 · 小农场 4.3.3
+/* 缄默之秋 · 小农场 4.3.4
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.3.3';
+  const VERSION = '4.3.4';
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -736,7 +736,7 @@
       '<i class="viewport-safe" aria-hidden="true"></i><button class="bubble" title="小农场 · 点击打开，按住拖动，贴边自动收起" aria-label="打开小农场，可拖动位置、贴边收起"><span aria-hidden="true">🌾</span></button>' +
       '<section class="panel" hidden aria-label="小农场"><header><div class="brand"><span class="mark">畦</span><div><h1>小农场</h1><small>秋日小院 / ' + VERSION + '</small></div></div>' +
       '<div class="wallet"><span>小院币 <b id="coins">—</b></span><span>行动力 <b id="energy">—</b></span></div>' +
-      '<div class="header-actions"><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
+      '<div class="header-actions"><div class="panel-zoom" role="group" aria-label="面板缩放"><button data-ui="zoom-out" title="缩小面板" aria-label="缩小面板">−</button><button data-ui="zoom-reset" title="恢复100%" aria-label="恢复面板100%大小">85%</button><button data-ui="zoom-in" title="放大面板" aria-label="放大面板">＋</button></div><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
       '<div class="workspace"><div class="nav-shell"><button class="nav-arrow" data-ui="nav-prev" aria-label="向左滚动导航">‹</button><nav aria-label="小院功能"></nav><button class="nav-arrow" data-ui="nav-next" aria-label="向右滚动导航">›</button></div><main tabindex="-1"><div class="loading">正在打开小院存档…</div></main></div>' +
       '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span>v' + VERSION + '</span></footer>' +
       '<dialog aria-label="小农场操作"><div class="dialog-head"><h2></h2><button data-ui="dismiss" aria-label="关闭弹窗">×</button></div><div class="dialog-content"></div><p class="dialog-error" role="alert" hidden></p><div class="dialog-actions"></div></dialog></section>' +
@@ -757,8 +757,8 @@
     function revealActiveTab(){
       const active=$('nav .active');if(!active)return;
       const ar=active.getBoundingClientRect(),nr=nav.getBoundingClientRect();
-      if(ar.left<nr.left)nav.scrollLeft-=nr.left-ar.left+6;
-      else if(ar.right>nr.right)nav.scrollLeft+=ar.right-nr.right+6;
+      if(ar.left<nr.left)nav.scrollLeft-=(nr.left-ar.left)/panelZoomScale()+6;
+      else if(ar.right>nr.right)nav.scrollLeft+=(ar.right-nr.right)/panelZoomScale()+6;
       updateNavEdges();
     }
     nav.addEventListener('pointerdown',event=>{
@@ -773,7 +773,7 @@
         navDrag.moved=true;navSuppressClick=true;
         nav.setPointerCapture?.(event.pointerId);nav.classList.add('dragging');
       }
-      if(navDrag.moved){event.preventDefault();nav.scrollLeft=navDrag.left-delta;updateNavEdges();}
+      if(navDrag.moved){event.preventDefault();nav.scrollLeft=navDrag.left-delta/panelZoomScale();updateNavEdges();}
     });
     function endNavDrag(event){
       if(!navDrag||event.pointerId!==navDrag.id)return;
@@ -803,12 +803,13 @@
       buttons[next].focus({preventScroll:true});buttons[next].click();
     });
     const bubble=$('.bubble'),panelHandle=$('header'),uiKey='jmzq_farm_floating_v1'+(preview?'_preview':'');
-    const floating={bubble:{x:1,y:.65,edge:'right'},panel:{x:.5,y:.5}};
+    const floating={bubble:{x:1,y:.65,edge:'right'},panel:{x:.5,y:.5},scale:85};
     try{
       const saved=JSON.parse(p.localStorage.getItem(uiKey));
       for(const key of ['bubble','panel'])if(Number.isFinite(saved?.[key]?.x)&&Number.isFinite(saved?.[key]?.y))floating[key]={x:clamp(saved[key].x,0,1),y:clamp(saved[key].y,0,1)};
       if(saved?.bubble)floating.bubble.edge=['left','right'].includes(saved.bubble.edge)?saved.bubble.edge:
         floating.bubble.x===0?'left':floating.bubble.x===1?'right':null;
+      if(Number.isFinite(saved?.scale))floating.scale=clamp(Math.round(saved.scale/5)*5,70,110);
     }catch{ /* Storage restrictions must not hide the launcher. */ }
     let floatingDrag=null,floatingFrame=0,floatingObserver=null,bubbleClickBlocked=false,bubbleClickTimer=0;
     let bubbleEdgeTimer=0,bubblePeek=false,bubbleHovered=false;
@@ -816,6 +817,12 @@
     function viewport(){
       const v=p.visualViewport;
       return {x:Math.max(0,Number(v?.offsetLeft)||0),y:Math.max(0,Number(v?.offsetTop)||0),width:Math.max(1,Number(v?.width)||p.innerWidth||doc.documentElement.clientWidth||320),height:Math.max(1,Number(v?.height)||p.innerHeight||doc.documentElement.clientHeight||600)};
+    }
+    function panelZoomScale(){return viewport().width>768?floating.scale/100:1;}
+    function setPanelZoom(value){
+      if(viewport().width<=768)return;
+      finishFloating();floating.scale=clamp(Math.round(value/5)*5,70,110);
+      saveFloating();layoutFloating();revealActiveTab();
     }
     function floatBounds(element){
       const v=viewport(),safe=p.getComputedStyle($('.viewport-safe')),rect=element.getBoundingClientRect();
@@ -828,8 +835,8 @@
       let left=b.left+pos.x*b.width;
       if(key==='bubble'){
         const edge=pos.edge,peek=bubblePeek&&!!edge,wide=element.getBoundingClientRect().width||element.offsetWidth||40;
-        const exposed=viewport().width<=768||p.matchMedia?.('(pointer:coarse)').matches?24:14;
-        element.style.setProperty('--edge-peek',exposed+'px');
+        // Match the helper exactly: 40px/14px desktop, 34px/18px mobile.
+        const exposed=viewport().width<=768?18:14;
         element.classList.toggle('edge-peek-left',peek&&edge==='left');
         element.classList.toggle('edge-peek-right',peek&&edge==='right');
         if(edge){
@@ -841,7 +848,7 @@
         }else delete element.dataset.edge;
       }
       element.style.left=left+'px';element.style.top=(b.top+pos.y*b.height)+'px';
-      element.style.right='auto';element.style.bottom='auto';element.style.transform='none';
+      element.style.right='auto';element.style.bottom='auto';element.style.transform=key==='panel'?'scale('+panelZoomScale()+')':'none';
     }
     function keyboardOnBubble(){return root.activeElement===bubble&&bubble.matches(':focus-visible');}
     function scheduleBubbleHide(delay=900){
@@ -868,6 +875,17 @@
       const v=viewport(),safe=p.getComputedStyle($('.viewport-safe'));
       host.style.setProperty('--vh',Math.max(1,v.height-(parseFloat(safe.paddingTop)||0)-(parseFloat(safe.paddingBottom)||0))+'px');
       host.style.setProperty('--vw',Math.max(1,v.width-(parseFloat(safe.paddingLeft)||0)-(parseFloat(safe.paddingRight)||0))+'px');
+      const scale=panelZoomScale(),desktop=v.width>768;
+      const availableWidth=Math.max(1,v.width-(parseFloat(safe.paddingLeft)||0)-(parseFloat(safe.paddingRight)||0));
+      const availableHeight=Math.max(1,v.height-(parseFloat(safe.paddingTop)||0)-(parseFloat(safe.paddingBottom)||0));
+      // Scale only the farm panel, never the host page or launcher. Measure bounds after scaling.
+      host.style.setProperty('--panel-width',Math.max(1,Math.min(1180,availableWidth-24,(availableWidth-24)/scale))+'px');
+      host.style.setProperty('--panel-height',Math.max(1,Math.min(850,availableHeight-24,(availableHeight-24)/scale))+'px');
+      panel.style.transform='scale('+scale+')';
+      $('.panel-zoom').hidden=!desktop;
+      $('[data-ui="zoom-reset"]').textContent=Math.round(scale*100)+'%';
+      $('[data-ui="zoom-out"]').disabled=floating.scale<=70;
+      $('[data-ui="zoom-in"]').disabled=floating.scale>=110;
       if(!floatingDrag){
         // Viewport/safe-area corrections must clamp immediately, not animate through off-screen space.
         bubble.style.transition='none';placeFloating(bubble,'bubble');placeFloating(panel,'panel');
@@ -897,7 +915,7 @@
       // Keep a remembered axis when the full-size panel has no room to move on it.
       if(b.width)floating[d.key].x=(left-b.left)/b.width;
       if(b.height)floating[d.key].y=(top-b.top)/b.height;
-      d.element.style.left=left+'px';d.element.style.top=top+'px';d.element.style.right='auto';d.element.style.bottom='auto';d.element.style.transform='none';
+      d.element.style.left=left+'px';d.element.style.top=top+'px';d.element.style.right='auto';d.element.style.bottom='auto';
     }
     function finishFloating(event){
       const d=floatingDrag;if(!d||(event?.pointerId!=null&&event.pointerId!==d.id))return;
@@ -1029,6 +1047,9 @@
       if(button.classList.contains('bubble')) { showPanel(); return; }
       if(button.dataset.ui === 'close') { hidePanel(); return; }
       if(button.dataset.ui === 'dismiss') { dismiss(); return; }
+      if(button.dataset.ui==='zoom-in'||button.dataset.ui==='zoom-out'||button.dataset.ui==='zoom-reset'){
+        setPanelZoom(button.dataset.ui==='zoom-reset'?100:floating.scale+(button.dataset.ui==='zoom-in'?5:-5));return;
+      }
       if(button.dataset.ui==='nav-prev'||button.dataset.ui==='nav-next'){
         nav.scrollLeft+=(button.dataset.ui==='nav-next'?1:-1)*Math.max(100,nav.clientWidth*.72);updateNavEdges();return;
       }
@@ -1526,21 +1547,22 @@ button:hover{border-color:var(--accent);background:var(--accent-bg)}button:disab
 button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button.selected{border-color:var(--accent);background:var(--accent-bg);box-shadow:inset 0 0 0 1px var(--accent)}
 .viewport-safe{position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
-.bubble{position:fixed;right:18px;top:65%;pointer-events:auto;display:flex;align-items:center;justify-content:center;width:40px;height:40px;min-width:40px;min-height:40px;padding:0;border:1.5px solid rgba(180,150,80,.35);border-radius:4px;background:linear-gradient(150deg,#1a1814,#0f0e0a);box-shadow:0 4px 16px #0008,inset 0 1px 0 #ffffff08;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;cursor:grab;z-index:2;transition:left .22s ease,opacity .22s,border-color .22s,box-shadow .22s}
+.bubble{position:fixed;right:18px;top:65%;pointer-events:auto;display:flex;align-items:center;justify-content:center;width:40px;height:40px;min-width:40px;min-height:40px;padding:0;border:1.5px solid rgba(180,150,80,.35);border-radius:4px;background:linear-gradient(150deg,#1a1814,#0f0e0a);box-shadow:0 4px 16px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.03);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;cursor:grab;z-index:2;transition:left .25s ease,opacity .25s,border-color .25s,box-shadow .25s}
 .bubble span{font:400 22px/1 "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;color:#d7b653;filter:drop-shadow(0 0 4px #c8a03255);transition:opacity .22s,filter .22s}
 .bubble:hover{border-color:#d4af3799;background:linear-gradient(150deg,#1a1814,#0f0e0a);box-shadow:0 6px 24px #0008,0 0 18px #d4af371f}.bubble:hover span{filter:drop-shadow(0 0 8px #d4af3799)}
 .bubble:focus-visible{outline:2px solid #d4af37;outline-offset:3px}
-.bubble.edge-peek-left,.bubble.edge-peek-right{opacity:.72;box-shadow:0 2px 10px #0005}
-.bubble.edge-peek-left{border-radius:0 6px 6px 0;clip-path:inset(0 0 0 calc(100% - var(--edge-peek,14px)))}
-.bubble.edge-peek-right{border-radius:6px 0 0 6px;clip-path:inset(0 calc(100% - var(--edge-peek,14px)) 0 0)}
+.bubble.edge-peek-left,.bubble.edge-peek-right{opacity:.72;box-shadow:0 2px 10px rgba(0,0,0,.3)}
+.bubble.edge-peek-left{border-radius:0 6px 6px 0}
+.bubble.edge-peek-right{border-radius:6px 0 0 6px}
 .bubble.edge-peek-left span,.bubble.edge-peek-right span{opacity:.38}
-@media(max-width:768px),(pointer:coarse){.bubble{width:44px;height:44px;min-width:44px;min-height:44px}}
+@media(max-width:768px){.bubble{width:34px;height:34px;min-width:34px;min-height:34px}.bubble span{font-size:18px}}
 @media(prefers-reduced-motion:reduce){.bubble,.bubble span{transition:none}}
-.panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1180px,calc(var(--vw,100vw) - 24px));height:min(850px,calc(var(--vh,100vh) - 24px));display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;pointer-events:auto;box-shadow:0 18px 70px #0007;container:garden / inline-size}
+.panel{position:fixed;left:50%;top:50%;transform-origin:top left;width:var(--panel-width,min(1180px,calc(var(--vw,100vw) - 24px)));height:var(--panel-height,min(850px,calc(var(--vh,100vh) - 24px)));display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;pointer-events:auto;box-shadow:0 18px 70px #0007;container:garden / inline-size}
 header{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}.floating-dragging{cursor:grabbing!important;transition:none!important}
 header{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}.mark{display:grid;place-items:center;width:37px;height:37px;color:var(--accent);border:1px solid var(--accent);background:var(--accent-bg);border-radius:8px;font:24px/1 serif}.brand small{font-size:10px;letter-spacing:.08em}
 .wallet{display:flex;gap:22px;margin-left:auto;color:var(--muted);font-size:11px}.wallet span{display:flex;align-items:baseline;gap:8px}.wallet b{font-size:17px;color:var(--text);font-variant-numeric:tabular-nums}.header-actions{display:flex;gap:6px}.header-actions button{width:32px;min-height:32px;padding:3px;font-size:20px}
+.panel-zoom{display:flex;align-items:center;gap:1px;padding-right:6px;margin-right:2px;border-right:1px solid var(--line)}.panel-zoom button{width:27px;font-size:16px;background:transparent}.panel-zoom [data-ui="zoom-reset"]{width:46px;font:12px/1.4 "Microsoft YaHei",system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}
 .workspace{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .nav-shell{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;align-items:center;gap:4px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
 nav{display:flex;align-items:stretch;gap:3px;min-width:0;overflow-x:auto;overflow-y:hidden;padding:5px 0 6px;scrollbar-width:thin;scrollbar-color:var(--line) transparent;overscroll-behavior-x:contain;touch-action:pan-x;user-select:none;-webkit-user-select:none;cursor:grab}

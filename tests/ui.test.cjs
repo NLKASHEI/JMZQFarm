@@ -157,13 +157,26 @@ test('鼠标拖动导航不误触TAB，滚轮和箭头有效，数据刷新不�
   Object.defineProperty(nav,'scrollWidth',{value:1000});Object.defineProperty(nav,'clientWidth',{value:250});
   const pointer=(type,x)=>nav.dispatchEvent(new env.w.MouseEvent(type,{bubbles:true,clientX:x,button:0,cancelable:true}));
   pointer('pointerdown',200);pointer('pointermove',100);pointer('pointerup',100);
-  assert.equal(nav.scrollLeft,100);
+  assert.equal(nav.scrollLeft,100/.85,'默认85%缩放下，屏幕拖动距离转换为导航内容距离');
   env.root.querySelector('[data-tab="ranch"]').click();assert.equal(env.root.querySelector('main').dataset.page,'overview');
   env.click('[data-tab="ranch"]');assert.equal(env.root.querySelector('main').dataset.page,'ranch');
   nav.scrollLeft=340;env.click('[data-ui="theme"]');await until(()=>env.root.querySelector('.garden.light'));
   assert.equal(nav.scrollLeft,340);
   nav.dispatchEvent(new env.w.WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:80}));assert.equal(nav.scrollLeft,420);
   env.click('[data-ui="nav-next"]');assert.equal(nav.scrollLeft,600);
+});
+
+test('面板缩放独立于经营存档，默认85%、上下限与恢复100%有效',async t=>{
+  const env=await setup(t),main=env.root.querySelector('main'),before=await env.read();
+  const percent=env.root.querySelector('[data-ui="zoom-reset"]');
+  assert.equal(percent.textContent,'85%');main.dataset.sentinel='keep';
+  for(let i=0;i<3;i++)env.click('[data-ui="zoom-out"]');
+  assert.equal(percent.textContent,'70%');assert.equal(env.root.querySelector('[data-ui="zoom-out"]').disabled,true);
+  env.click('[data-ui="zoom-reset"]');assert.equal(percent.textContent,'100%');
+  for(let i=0;i<2;i++)env.click('[data-ui="zoom-in"]');
+  assert.equal(percent.textContent,'110%');assert.equal(env.root.querySelector('[data-ui="zoom-in"]').disabled,true);
+  assert.equal(JSON.parse(env.w.localStorage.getItem('jmzq_farm_floating_v1_preview')).scale,110);
+  assert.equal(main.dataset.sentinel,'keep');assert.deepEqual(await env.read(),before);
 });
 
 test('配方和库存点选有唯一选中状态，动作只作用于选中条目',async t=>{

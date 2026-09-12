@@ -16,8 +16,11 @@ const url=process.env.FARM_PREVIEW_URL||'http://127.0.0.1:8765/JMZQFarm/preview/
       async function peek(edge){
         await page.waitForFunction(edge=>document.querySelector('#jmzq-garden').shadowRoot.querySelector('.bubble').classList.contains('edge-peek-'+edge),edge);
         await page.waitForTimeout(260);
-        const r=await bubble.boundingBox(),exposed=mobile?24:14;
+        const r=await bubble.boundingBox(),exposed=mobile?18:14;
         assert.ok(edge==='right'?Math.abs(width-r.x-exposed)<1:Math.abs(r.x+r.width-exposed)<1,JSON.stringify({mobile,edge,r,exposed}));
+        assert.equal(r.width,mobile?34:40);assert.equal(r.height,mobile?34:40);
+        const style=await bubble.evaluate(e=>({opacity:getComputedStyle(e).opacity,iconOpacity:getComputedStyle(e.querySelector('span')).opacity,clip:getComputedStyle(e).clipPath,shadow:getComputedStyle(e).boxShadow}));
+        assert.equal(style.opacity,'0.72');assert.equal(style.iconOpacity,'0.38');assert.equal(style.clip,'none');assert.ok(style.shadow.includes('0.3'));
         assert.ok(r.y>=0&&r.y+r.height<=height);
         return r;
       }
