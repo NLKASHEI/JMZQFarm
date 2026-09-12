@@ -22,9 +22,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:b.x+b.width/2,y:b.y+b.height/2}]});
     await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:45,y:130}]});
     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-    await page.waitForTimeout(100);const moved=await inside();assert.ok(moved.y<b.y-100);assert.equal(await page.locator('.panel').isVisible(),false);
+    await page.waitForTimeout(280);const moved=await inside();assert.ok(moved.y<b.y-100);assert.equal(await page.locator('.panel').isVisible(),false);
     const stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('jmzq_farm_floating_v1_preview')));assert.ok(stored);
-    await page.reload();await page.locator('[data-ui="close"]').tap();const restored=await inside();assert.ok(Math.abs(restored.x-moved.x)<2&&Math.abs(restored.y-moved.y)<2);
+    await page.reload();await page.locator('[data-ui="close"]').tap();await page.waitForTimeout(280);const restored=await inside();assert.ok(Math.abs(restored.x-moved.x)<2&&Math.abs(restored.y-moved.y)<2,JSON.stringify({restored,moved}));
     await page.locator('.bubble').tap();assert.equal(await page.locator('.panel').isVisible(),true);await page.locator('[data-ui="close"]').tap();
     // Simulate address-bar/keyboard/pinch viewport resize + pan, independent of layout viewport.
     await page.evaluate(()=>{

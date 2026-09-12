@@ -1,10 +1,10 @@
-/* 缄默之秋 · 小农场 4.3.2
+/* 缄默之秋 · 小农场 4.3.3
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.3.2';
+  const VERSION = '4.3.3';
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -733,7 +733,7 @@
       return seconds ? (Math.floor(seconds/60) ? Math.floor(seconds/60)+'分' : '') + seconds%60+'秒' : '已完成';
     };
     root.innerHTML = '<style>' + styles() + '</style><div class="garden dark">' +
-      '<i class="viewport-safe" aria-hidden="true"></i><button class="bubble" title="点击打开，按住拖动" aria-label="打开小农场，可拖动位置">🌾<span>小院</span></button>' +
+      '<i class="viewport-safe" aria-hidden="true"></i><button class="bubble" title="小农场 · 点击打开，按住拖动，贴边自动收起" aria-label="打开小农场，可拖动位置、贴边收起"><span aria-hidden="true">🌾</span></button>' +
       '<section class="panel" hidden aria-label="小农场"><header><div class="brand"><span class="mark">畦</span><div><h1>小农场</h1><small>秋日小院 / ' + VERSION + '</small></div></div>' +
       '<div class="wallet"><span>小院币 <b id="coins">—</b></span><span>行动力 <b id="energy">—</b></span></div>' +
       '<div class="header-actions"><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
@@ -803,12 +803,15 @@
       buttons[next].focus({preventScroll:true});buttons[next].click();
     });
     const bubble=$('.bubble'),panelHandle=$('header'),uiKey='jmzq_farm_floating_v1'+(preview?'_preview':'');
-    const floating={bubble:{x:1,y:.65},panel:{x:.5,y:.5}};
+    const floating={bubble:{x:1,y:.65,edge:'right'},panel:{x:.5,y:.5}};
     try{
       const saved=JSON.parse(p.localStorage.getItem(uiKey));
       for(const key of ['bubble','panel'])if(Number.isFinite(saved?.[key]?.x)&&Number.isFinite(saved?.[key]?.y))floating[key]={x:clamp(saved[key].x,0,1),y:clamp(saved[key].y,0,1)};
+      if(saved?.bubble)floating.bubble.edge=['left','right'].includes(saved.bubble.edge)?saved.bubble.edge:
+        floating.bubble.x===0?'left':floating.bubble.x===1?'right':null;
     }catch{ /* Storage restrictions must not hide the launcher. */ }
     let floatingDrag=null,floatingFrame=0,floatingObserver=null,bubbleClickBlocked=false,bubbleClickTimer=0;
+    let bubbleEdgeTimer=0,bubblePeek=false,bubbleHovered=false;
     function saveFloating(){try{p.localStorage.setItem(uiKey,JSON.stringify(floating));}catch{}}
     function viewport(){
       const v=p.visualViewport;
@@ -822,15 +825,54 @@
     function placeFloating(element,key){
       if(element.hidden)return;
       const b=floatBounds(element),pos=floating[key];
-      element.style.left=(b.left+pos.x*b.width)+'px';element.style.top=(b.top+pos.y*b.height)+'px';
+      let left=b.left+pos.x*b.width;
+      if(key==='bubble'){
+        const edge=pos.edge,peek=bubblePeek&&!!edge,wide=element.getBoundingClientRect().width||element.offsetWidth||40;
+        const exposed=viewport().width<=768||p.matchMedia?.('(pointer:coarse)').matches?24:14;
+        element.style.setProperty('--edge-peek',exposed+'px');
+        element.classList.toggle('edge-peek-left',peek&&edge==='left');
+        element.classList.toggle('edge-peek-right',peek&&edge==='right');
+        if(edge){
+          element.dataset.edge=edge;
+          // Revealed docked launchers stay flush with the safe edge: hovering the handle
+          // must not move its entire hit target out from under the mouse/finger.
+          left=edge==='left'?b.left-8:b.left+b.width+8;
+          if(peek)left+=edge==='left'?-(wide-exposed):wide-exposed;
+        }else delete element.dataset.edge;
+      }
+      element.style.left=left+'px';element.style.top=(b.top+pos.y*b.height)+'px';
       element.style.right='auto';element.style.bottom='auto';element.style.transform='none';
+    }
+    function keyboardOnBubble(){return root.activeElement===bubble&&bubble.matches(':focus-visible');}
+    function scheduleBubbleHide(delay=900){
+      clearTimeout(bubbleEdgeTimer);bubbleEdgeTimer=0;
+      if(!alive||bubble.hidden||!panel.hidden||!floating.bubble.edge)return;
+      bubbleEdgeTimer=setTimeout(()=>{
+        bubbleEdgeTimer=0;
+        if(!alive||bubble.hidden||!panel.hidden||floatingDrag||bubbleHovered||keyboardOnBubble())return;
+        bubblePeek=true;placeFloating(bubble,'bubble');
+      },delay);
+    }
+    function revealBubble(){
+      clearTimeout(bubbleEdgeTimer);bubbleEdgeTimer=0;bubblePeek=false;
+      if(alive&&!floatingDrag)placeFloating(bubble,'bubble');
+    }
+    function dockBubble(){
+      const b=floatBounds(bubble),rect=bubble.getBoundingClientRect(),zone=viewport().width<=768?28:22;
+      const leftDistance=rect.left-(b.left-8),rightDistance=b.left+b.width+8-rect.left;
+      const edge=leftDistance<=zone&&leftDistance<=rightDistance?'left':rightDistance<=zone?'right':null;
+      floating.bubble.edge=edge;if(edge)floating.bubble.x=edge==='left'?0:1;
     }
     function layoutFloating(){
       floatingFrame=0;if(!alive)return;
       const v=viewport(),safe=p.getComputedStyle($('.viewport-safe'));
       host.style.setProperty('--vh',Math.max(1,v.height-(parseFloat(safe.paddingTop)||0)-(parseFloat(safe.paddingBottom)||0))+'px');
       host.style.setProperty('--vw',Math.max(1,v.width-(parseFloat(safe.paddingLeft)||0)-(parseFloat(safe.paddingRight)||0))+'px');
-      if(!floatingDrag){placeFloating(bubble,'bubble');placeFloating(panel,'panel');}
+      if(!floatingDrag){
+        // Viewport/safe-area corrections must clamp immediately, not animate through off-screen space.
+        bubble.style.transition='none';placeFloating(bubble,'bubble');placeFloating(panel,'panel');
+        void bubble.offsetWidth;bubble.style.transition='';
+      }
       updateNavEdges();
     }
     function resize(){if(!floatingFrame)floatingFrame=p.requestAnimationFrame(layoutFloating);}
@@ -840,6 +882,8 @@
       if(key==='panel'&&event.target.closest('button,input,select,textarea,a'))return;
       const element=key==='bubble'?bubble:panel,handle=key==='bubble'?bubble:panelHandle;
       bubbleClickBlocked=false;clearTimeout(bubbleClickTimer);
+      // Reveal synchronously before measuring the drag origin; pointer capture retains touch ownership.
+      if(key==='bubble'){bubble.classList.add('floating-dragging');revealBubble();}
       const rect=element.getBoundingClientRect();
       floatingDrag={key,element,handle,id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,moved:false};
       try{handle.setPointerCapture?.(event.pointerId);}catch{}
@@ -860,6 +904,10 @@
       floatingDrag=null;d.handle.classList.remove('floating-dragging');
       if(d.key==='bubble'&&(d.moved||event?.type==='pointercancel'))blockBubbleClick();
       try{if(d.handle.hasPointerCapture?.(d.id))d.handle.releasePointerCapture(d.id);}catch{}
+      if(d.key==='bubble'){
+        if(d.moved)dockBubble();
+        scheduleBubbleHide();
+      }
       if(d.moved)saveFloating();resize();
     }
     bubble.addEventListener('pointerdown',event=>startFloating(event,'bubble'));
@@ -867,6 +915,10 @@
     for(const handle of [bubble,panelHandle])handle.addEventListener('lostpointercapture',finishFloating);
     bubble.addEventListener('click',event=>{if(bubbleClickBlocked){event.preventDefault();event.stopPropagation();}},true);
     bubble.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){bubbleClickBlocked=false;clearTimeout(bubbleClickTimer);}});
+    bubble.addEventListener('pointerenter',event=>{if(event.pointerType==='mouse'||event.pointerType==='pen'){bubbleHovered=true;revealBubble();}});
+    bubble.addEventListener('pointerleave',event=>{if(event.pointerType==='mouse'||event.pointerType==='pen'){bubbleHovered=false;scheduleBubbleHide();}});
+    bubble.addEventListener('focus',revealBubble);
+    bubble.addEventListener('blur',()=>scheduleBubbleHide());
     doc.addEventListener('pointermove',moveFloating,{capture:true,passive:false});
     doc.addEventListener('pointerup',finishFloating,true);doc.addEventListener('pointercancel',finishFloating,true);p.addEventListener('blur',finishFloating);
     if(typeof p.ResizeObserver==='function'){floatingObserver=new p.ResizeObserver(resize);floatingObserver.observe(bubble);floatingObserver.observe(panel);}
@@ -879,14 +931,14 @@
       if(next<artBases.length){img.dataset.provider=String(next);img.src=artBases[next]+name+'.webp';}
       else {img.removeAttribute('src');img.hidden=true;(img.closest('.scene-tile,.sprite,.medal,.map-art')||img.parentElement).classList.add('asset-missing');}
     },true);
-    layoutFloating();p.addEventListener('resize',resize);p.visualViewport?.addEventListener('resize',resize);p.visualViewport?.addEventListener('scroll',resize);
+    layoutFloating();scheduleBubbleHide(1200);p.addEventListener('resize',resize);p.visualViewport?.addEventListener('resize',resize);p.visualViewport?.addEventListener('scroll',resize);
     function floatingPageShow(){resize();}
-    function floatingVisibility(){if(!doc.hidden)resize();}
+    function floatingVisibility(){if(!doc.hidden){resize();scheduleBubbleHide();}}
     function pageHide(event){if(event.persisted){finishFloating();releaseFish();fishPaused=!!liveFish;flushFish();}else cleanup();}
     p.addEventListener('pageshow',floatingPageShow);doc.addEventListener('visibilitychange',floatingVisibility);
     function cleanup() {
       alive = false; clearInterval(interval); clearTimeout(navClickTimer);navObserver?.disconnect();p.cancelAnimationFrame(fishFrame);
-      finishFloating();floatingObserver?.disconnect();p.cancelAnimationFrame(floatingFrame);clearTimeout(bubbleClickTimer);
+      finishFloating();floatingObserver?.disconnect();p.cancelAnimationFrame(floatingFrame);clearTimeout(bubbleClickTimer);clearTimeout(bubbleEdgeTimer);
       doc.removeEventListener('pointermove',moveFloating,true);doc.removeEventListener('pointerup',finishFloating,true);doc.removeEventListener('pointercancel',finishFloating,true);p.removeEventListener('blur',finishFloating);
       p.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('scroll',resize);
       p.removeEventListener('pageshow',floatingPageShow);doc.removeEventListener('visibilitychange',floatingVisibility);
@@ -958,8 +1010,8 @@
       const el = $('.toast'); el.textContent = text; el.classList.toggle('error',error); el.hidden = false;
       clearTimeout(toast.timer); toast.timer = setTimeout(()=>{el.hidden=true;},4500);
     }
-    function showPanel() { finishFloating();panel.hidden = false;bubble.hidden = true;layoutFloating();if(state) {render(false);if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
-    function hidePanel() { finishFloating();dismiss();releaseFish();fishPaused=!!liveFish;flushFish();panel.hidden = true;bubble.hidden = false;layoutFloating();bubble.focus({preventScroll:true});p.cancelAnimationFrame(fishFrame); }
+    function showPanel() { finishFloating();revealBubble();bubbleHovered=false;panel.hidden = false;bubble.hidden = true;layoutFloating();if(state) {render(false);if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
+    function hidePanel() { finishFloating();dismiss();releaseFish();fishPaused=!!liveFish;flushFish();panel.hidden = true;bubble.hidden = false;revealBubble();layoutFloating();bubble.focus({preventScroll:true});scheduleBubbleHide();p.cancelAnimationFrame(fishFrame); }
     function dismiss() { if(dialog.open) dialog.close(); dialogCallback = null; lastFocus?.focus?.({preventScroll:true}); }
     function modal(title,body,buttons,callback) {
       lastFocus = root.activeElement;
@@ -1474,7 +1526,16 @@ button:hover{border-color:var(--accent);background:var(--accent-bg)}button:disab
 button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button.selected{border-color:var(--accent);background:var(--accent-bg);box-shadow:inset 0 0 0 1px var(--accent)}
 .viewport-safe{position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
-.bubble{position:fixed;right:18px;top:65%;pointer-events:auto;display:flex;align-items:center;gap:8px;border-color:var(--accent);background:var(--panel);box-shadow:0 6px 24px #0005;padding:10px 14px;min-width:76px;min-height:44px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:grab;z-index:2}
+.bubble{position:fixed;right:18px;top:65%;pointer-events:auto;display:flex;align-items:center;justify-content:center;width:40px;height:40px;min-width:40px;min-height:40px;padding:0;border:1.5px solid rgba(180,150,80,.35);border-radius:4px;background:linear-gradient(150deg,#1a1814,#0f0e0a);box-shadow:0 4px 16px #0008,inset 0 1px 0 #ffffff08;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;cursor:grab;z-index:2;transition:left .22s ease,opacity .22s,border-color .22s,box-shadow .22s}
+.bubble span{font:400 22px/1 "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;color:#d7b653;filter:drop-shadow(0 0 4px #c8a03255);transition:opacity .22s,filter .22s}
+.bubble:hover{border-color:#d4af3799;background:linear-gradient(150deg,#1a1814,#0f0e0a);box-shadow:0 6px 24px #0008,0 0 18px #d4af371f}.bubble:hover span{filter:drop-shadow(0 0 8px #d4af3799)}
+.bubble:focus-visible{outline:2px solid #d4af37;outline-offset:3px}
+.bubble.edge-peek-left,.bubble.edge-peek-right{opacity:.72;box-shadow:0 2px 10px #0005}
+.bubble.edge-peek-left{border-radius:0 6px 6px 0;clip-path:inset(0 0 0 calc(100% - var(--edge-peek,14px)))}
+.bubble.edge-peek-right{border-radius:6px 0 0 6px;clip-path:inset(0 calc(100% - var(--edge-peek,14px)) 0 0)}
+.bubble.edge-peek-left span,.bubble.edge-peek-right span{opacity:.38}
+@media(max-width:768px),(pointer:coarse){.bubble{width:44px;height:44px;min-width:44px;min-height:44px}}
+@media(prefers-reduced-motion:reduce){.bubble,.bubble span{transition:none}}
 .panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1180px,calc(var(--vw,100vw) - 24px));height:min(850px,calc(var(--vh,100vh) - 24px));display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;pointer-events:auto;box-shadow:0 18px 70px #0007;container:garden / inline-size}
 header{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}.floating-dragging{cursor:grabbing!important;transition:none!important}
 header{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
@@ -1580,7 +1641,7 @@ footer{padding:5px 10px;font-size:9px}summary{font-size:12px}summary small{font-
 @container garden (max-width:480px){main[data-page="farm"] .selection-panel>.actions,main[data-page="ranch"] .selection-panel>.actions{max-width:88px}main[data-page="farm"] .selection-panel>.actions button,main[data-page="ranch"] .selection-panel>.actions button{font-size:11px;padding:7px 8px}main[data-page="farm"] .selection-title p,main[data-page="ranch"] .selection-title p{display:none}main[data-page="ranch"] .selection-panel>.actions{gap:4px}main[data-page="ranch"] .danger-zone small{font-size:9px}.map-art{max-height:none}}
 @container garden (max-width:340px){.brand .mark{display:none}.wallet{gap:8px}.overview-heading h2{font-size:14px}.weather-tag{font-size:9px}.map-pin small{display:none}.map-pin{min-height:32px;min-width:39px;padding:4px 6px}.land-tile .sprite{width:35px;height:35px}.land-tile{min-height:89px}.recipe-option .item-symbol{width:24px;height:24px}.stock-tile .sprite{width:34px;height:34px}}
 @container garden (max-width:720px){.pond-scene{aspect-ratio:9/4}}
-@media(max-width:600px){.panel{width:calc(var(--vw,100vw) - 16px);height:calc(var(--vh,100vh) - 16px);border-radius:9px}.bubble{padding:9px 12px}}
+@media(max-width:600px){.panel{width:calc(var(--vw,100vw) - 16px);height:calc(var(--vh,100vh) - 16px);border-radius:9px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 `;
     }
