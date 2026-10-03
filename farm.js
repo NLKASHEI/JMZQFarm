@@ -1,14 +1,16 @@
-/* 缄默之秋 · 小农场 4.4.0
+/* 缄默之秋 · 小农场 4.4.1
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.4.0';
+  const VERSION = '4.4.1';
+  // 保留完整字面量，供重新拉取在执行远端脚本前核验版本。
+  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.1';
   const LATEST_SCRIPT_URLS = [
-    'https://raw.githubusercontent.com/NLKASHEI/JMZQFarm/main/farm.min.js',
-    'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
     'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
+    'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
+    'https://raw.githubusercontent.com/NLKASHEI/JMZQFarm/main/farm.min.js',
   ];
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
@@ -737,6 +739,7 @@
     if(preview) artBases.unshift(new URL(window.__GARDEN_ASSET_BASE__||'assets/v4.2/',window.location.href).href);
     const oldCleanup = p._farmCleanup || window._farmCleanup;
     if(typeof oldCleanup === 'function') await oldCleanup();
+    p._farmRelease = RELEASE_MARKER;
     doc.getElementById('jmzq-garden')?.remove();
     let alive = true, busy = false, db, state, tab = 'overview', lastReady = '', interval;
     let blockedByGeneration = false, blockedByMvu = false;
@@ -1186,8 +1189,20 @@
       if(busy)return;
       busy=true;toast('正在重新拉取 @main 最新版…');
       let lastError=null;
-      for(const url of LATEST_SCRIPT_URLS) {
-        try {await import(url+(url.includes('?')?'&':'?')+'farm_reload='+Date.now());return;}
+      for(const sourceUrl of LATEST_SCRIPT_URLS) {
+        const url=sourceUrl+(sourceUrl.includes('?')?'&':'?')+'farm_reload='+Date.now();
+        try {
+          const response=await fetch(url,{cache:'no-store'});
+          if(!response.ok)throw new Error('HTTP '+response.status);
+          const source=await response.text();
+          const marker=source.match(/JMZQ_FARM_RELEASE:(\d+\.\d+\.\d+)/);
+          if(!marker)throw new Error('@main 仍是旧版，未发现版本标记');
+          const parts=version=>version.split('.').map(value=>Number(value)||0);
+          const remote=parts(marker[1]),current=parts(VERSION);
+          const older=remote.some((value,index)=>value!==current[index]&&value<current[index]&&remote.slice(0,index).every((prefix,prefixIndex)=>prefix===current[prefixIndex]));
+          if(older)throw new Error('@main 为 v'+marker[1]+'，当前为 v'+VERSION+'，已阻止降级');
+          await import(url+'&farm_module=1');return;
+        }
         catch(error){lastError=error;}
       }
       busy=false;throw new Error('重新拉取失败：'+(lastError?.message||'网络不可用'));
