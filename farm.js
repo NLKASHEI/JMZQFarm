@@ -8,9 +8,9 @@
   // 保留完整字面量，供重新拉取在执行远端脚本前核验版本。
   const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.1';
   const LATEST_SCRIPT_URLS = [
-    'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
-    'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
-    'https://raw.githubusercontent.com/NLKASHEI/JMZQFarm/main/farm.min.js',
+    'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
+    'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
+    'https://raw.githubusercontent.com/NLKASHEI/JMZQFarm/master/farm.min.js',
   ];
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
@@ -767,7 +767,7 @@
       '<div class="wallet"><span>小院币 <b id="coins">—</b></span><span>行动力 <b id="energy">—</b></span></div>' +
       '<div class="header-actions"><div class="panel-zoom" role="group" aria-label="面板缩放"><button data-ui="zoom-out" title="缩小面板" aria-label="缩小面板">−</button><button data-ui="zoom-reset" title="恢复100%" aria-label="恢复面板100%大小">85%</button><button data-ui="zoom-in" title="放大面板" aria-label="放大面板">＋</button></div><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
       '<div class="workspace"><div class="nav-shell"><button class="nav-arrow" data-ui="nav-prev" aria-label="向左滚动导航">‹</button><nav aria-label="小院功能"></nav><button class="nav-arrow" data-ui="nav-next" aria-label="向右滚动导航">›</button></div><main tabindex="-1"><div class="loading">正在打开小院存档…</div></main></div>' +
-      '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span class="farm-maintenance"><button data-do="reload-latest" title="绕过缓存重新拉取 @main 最新版">重新拉取</button><button data-do="reset-farm" title="清空并重建小农场存档">重置</button><span>v' + VERSION + '</span></span></footer>' +
+      '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span class="farm-maintenance"><button data-do="reload-latest" title="绕过缓存重新拉取 @master 最新公开版">重新拉取</button><button data-do="reset-farm" title="清空并重建小农场存档">重置</button><span>v' + VERSION + '</span></span></footer>' +
       '<dialog aria-label="小农场操作"><div class="dialog-head"><h2></h2><button data-ui="dismiss" aria-label="关闭弹窗">×</button></div><div class="dialog-content"></div><p class="dialog-error" role="alert" hidden></p><div class="dialog-actions"></div></dialog></section>' +
       '<div class="toast" role="status" aria-live="polite" hidden></div></div>';
     // Keep the overlay outside body transforms/filters/overflow used by mobile themes.
@@ -1187,7 +1187,7 @@
     }
     async function reloadLatest() {
       if(busy)return;
-      busy=true;toast('正在重新拉取 @main 最新版…');
+      busy=true;toast('正在重新拉取 @master 最新公开版…');
       let lastError=null;
       for(const sourceUrl of LATEST_SCRIPT_URLS) {
         const url=sourceUrl+(sourceUrl.includes('?')?'&':'?')+'farm_reload='+Date.now();
@@ -1196,11 +1196,11 @@
           if(!response.ok)throw new Error('HTTP '+response.status);
           const source=await response.text();
           const marker=source.match(/JMZQ_FARM_RELEASE:(\d+\.\d+\.\d+)/);
-          if(!marker)throw new Error('@main 仍是旧版，未发现版本标记');
+          if(!marker)throw new Error('@master 仍是旧版，未发现版本标记');
           const parts=version=>version.split('.').map(value=>Number(value)||0);
           const remote=parts(marker[1]),current=parts(VERSION);
           const older=remote.some((value,index)=>value!==current[index]&&value<current[index]&&remote.slice(0,index).every((prefix,prefixIndex)=>prefix===current[prefixIndex]));
-          if(older)throw new Error('@main 为 v'+marker[1]+'，当前为 v'+VERSION+'，已阻止降级');
+          if(older)throw new Error('@master 为 v'+marker[1]+'，当前为 v'+VERSION+'，已阻止降级');
           await import(url+'&farm_module=1');return;
         }
         catch(error){lastError=error;}
