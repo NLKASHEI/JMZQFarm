@@ -1,10 +1,15 @@
-/* 缄默之秋 · 小农场 4.3.4
+/* 缄默之秋 · 小农场 4.4.0
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.3.4';
+  const VERSION = '4.4.0';
+  const LATEST_SCRIPT_URLS = [
+    'https://raw.githubusercontent.com/NLKASHEI/JMZQFarm/main/farm.min.js',
+    'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
+    'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
+  ];
   const KEY = 'garden_v4';
   const RECEIPTS = 'jmzq_farm_receipts_v4';
   const MINUTE = 60000;
@@ -218,7 +223,10 @@
     if(!s.tackle.ownedBaits.includes(s.tackle.bait)) s.tackle.ownedBaits.push(s.tackle.bait);
     s.fishBook ||= {longest:null,heaviest:null,perfect:0,chests:0,last:null};
     s.discoveries ||= []; s.claimedMilestones ||= []; s.projects ||= []; s.buffs.explore ||= 0;
-    s.idle ||= {built:false,enabled:false,lastAt:Date.now(),budget:120,spent:0,day:'',autoPlant:false,autoFeed:false,sellSurplus:false,keep:10,lastReport:null};
+    s.idle ||= {built:false,enabled:false,lastAt:Date.now(),budget:120,spent:0,day:'',autoPlant:false,autoCare:false,autoFeed:false,autoCraft:false,sellSurplus:false,keep:10,lastReport:null};
+    for(const key of ['built','enabled','autoPlant','autoCare','autoFeed','autoCraft','sellSurplus']) s.idle[key]=s.idle[key]===true;
+    s.idle.lastAt=number(s.idle.lastAt,Date.now());s.idle.spent=int(s.idle.spent,100000);s.idle.day=String(s.idle.day||'');
+    s.idle.budget=clamp(int(s.idle.budget),0,100000);s.idle.keep=clamp(int(s.idle.keep||10),1,9999);
     if(s.fishing && s.fishing.mode!=='stardew') {s.fishing=null;s.energy=Math.min(10+s.upgrades.tools,s.energy+1);}
     return s;
   }
@@ -445,9 +453,9 @@
       s.idle.built=true;s.idle.lastAt=now;message='值守岗已建成，可按自己的节奏开启代收与补种';
     } else if(type === 'idle-config') {
       requireThat(s.idle.built,'先建成值守岗');
-      for(const key of ['enabled','autoPlant','autoFeed','sellSurplus']) if(own(arg,key)) s.idle[key]=arg[key]===true;
-      if(own(arg,'budget'))s.idle.budget=clamp(int(arg.budget),0,1000);
-      if(own(arg,'keep'))s.idle.keep=clamp(int(arg.keep),1,100);
+      for(const key of ['enabled','autoPlant','autoCare','autoFeed','autoCraft','sellSurplus']) if(own(arg,key)) s.idle[key]=arg[key]===true;
+      if(own(arg,'budget'))s.idle.budget=clamp(int(arg.budget),0,100000);
+      if(own(arg,'keep'))s.idle.keep=clamp(int(arg.keep),1,9999);
       s.idle.lastAt=now;message=s.idle.enabled?'值守已按当前安排运行':'值守已暂停，作物仍会自然生长';
     } else if(type === 'milestone') {
       const goal=MILESTONES.find(g=>g.id===arg.id);
@@ -543,13 +551,17 @@
     else if(engine.progress<=0 || engine.elapsed>=90)engine.result='lost';
     return engine;
   }
+  function idleMaxHours(s) { return s.level>=15?48:s.level>=8?24:12; }
+  function idleCapacity(s) { return 400+int(s.level)*40+int(s.upgrades?.tools)*80; }
+  function inventoryCount(s) { return s.bag.reduce((sum,row)=>sum+int(row.count),0); }
   function settleIdle(s,now=Date.now()) {
     expandState(s);const idle=s.idle;
     if(!idle.enabled||!idle.built)return null;
-    const original=idle.lastAt,start=Math.max(original,now-8*60*MINUTE);
-    const slots=Math.min(480,Math.floor(Math.max(0,now-start)/MINUTE));
+    const hours=idleMaxHours(s),capacity=idleCapacity(s);
+    const original=idle.lastAt,start=Math.max(original,now-hours*60*MINUTE);
+    const slots=Math.min(hours*60,Math.floor(Math.max(0,now-start)/MINUTE));
     if(!slots)return null;
-    const report={at:now,minutes:slots,harvest:0,ranch:0,craft:0,planted:0,spent:0,sold:0,earned:0,capped:now-original>8*60*MINUTE,full:false};
+    const report={at:now,minutes:slots,maxHours:hours,capacity,harvest:0,ranch:0,craft:0,restarted:0,planted:0,cared:0,spent:0,sold:0,earned:0,capped:now-original>hours*60*MINUTE,full:false};
     const oldLog=clone(s.log),rand=()=>((hash(String(idle.lastAt)+':'+s.coins)%1000)/1000);
     for(let k=1;k<=slots;k++) {
       const moment=start+k*MINUTE,day=dayKey(moment);
@@ -564,25 +576,39 @@
         }
       }
       for(let i=0;i<s.plots.length;i++) {
-        const full=s.bag.reduce((a,b)=>a+b.count,0)>=200;if(full){report.full=true;break;}
+        const full=inventoryCount(s)>=capacity;if(full){report.full=true;break;}
         let plot=s.plots[i];
+        if(idle.autoCare && plot?.crop && !ready(plot,moment)) {
+          if(plot.trouble && canSpend(2)){action(s,'clear-trouble',{index:i},moment);charge(2);report.cared++;}
+          plot=s.plots[i];
+          if(!plot.watered){action(s,'care',{index:i},moment);report.cared++;}
+          plot=s.plots[i];
+          if(plot.watered&&!plot.tended&&canSpend(4)){action(s,'care',{index:i},moment);charge(4);report.cared++;}
+        }
+        plot=s.plots[i];
         if(ready(plot,moment)) {const before=s.stats.harvest;action(s,'harvest',{index:i},moment);report.harvest+=s.stats.harvest-before;}
         plot=s.plots[i];const crop=CROPS.find(c=>c.name===plot.lastCrop);
         if(idle.autoPlant && !plot.crop && crop && s.level>=crop.level && canSpend(crop.cost)) {action(s,'plant',{index:i,name:crop.name},moment,rand);charge(crop.cost);report.planted++;}
       }
       for(let i=0;i<s.pens.length;i++) {
         const pen=s.pens[i];if(!pen)continue;
-        if(s.bag.reduce((a,b)=>a+b.count,0)>=200){report.full=true;break;}
+        if(inventoryCount(s)>=capacity){report.full=true;break;}
         const animal=ANIMALS.find(a=>a.name===pen.name);
         if(idle.autoFeed&&!pen.fed&&canSpend(3)){action(s,'feed',{index:i},moment);charge(3);}
         if(animal.product&&moment>=pen.readyAt){const before=s.stats.ranch;action(s,'collect',{index:i},moment);report.ranch+=s.stats.ranch-before;}
       }
-      for(const job of [...s.workshop]) if(moment>=job.readyAt && s.bag.reduce((a,b)=>a+b.count,0)<200) {action(s,'claim-craft',{id:job.id},moment);report.craft++;}
+      for(const job of [...s.workshop]) if(moment>=job.readyAt && inventoryCount(s)<capacity) {
+        action(s,'claim-craft',{id:job.id},moment);report.craft++;
+        const recipe=RECIPES.find(x=>x.name===job.name);
+        if(idle.autoCraft&&recipe&&Object.entries(recipe.needs).every(([name,count])=>available(s,name)>=count)) {
+          action(s,'craft',{name:recipe.name},moment);report.restarted++;
+        }
+      }
       idle.lastAt=moment;
     }
     // 挂机批次合并成一条手记，避免每分钟刷日志。没有自动探索、钓鱼、出栏或外送。
-    s.log=oldLog;if(report.harvest||report.ranch||report.craft||report.planted||report.sold||!idle.lastReport)idle.lastReport=report;tick(s,now);
-    if(report.harvest||report.ranch||report.craft||report.planted||report.sold)log(s,'值守 '+slots+' 分钟：代收作物 '+report.harvest+'、畜牧 '+report.ranch+'、工坊 '+report.craft+'，补种 '+report.planted+' 块，花费 '+report.spent+' 币。',now);
+    s.log=oldLog;if(report.harvest||report.ranch||report.craft||report.restarted||report.planted||report.cared||report.sold||!idle.lastReport)idle.lastReport=report;tick(s,now);
+    if(report.harvest||report.ranch||report.craft||report.planted||report.cared||report.sold)log(s,'值守 '+slots+' 分钟：代收作物 '+report.harvest+'、畜牧 '+report.ranch+'、工坊 '+report.craft+'，续作 '+report.restarted+' 次，补种 '+report.planted+' 块，照料 '+report.cared+' 次，花费 '+report.spent+' 币。',now);
     return report;
   }
   function migrate(legacy,now = Date.now()) {
@@ -683,7 +709,7 @@
     return {variables:next,duplicate:false,name};
   }
   const Core = {VERSION,KEY,RECEIPTS,CROPS,ANIMALS,FISH,ITEMS,RECIPES,ZONES,STANCES,UPGRADES,WEATHER,RODS,BAITS,SPOTS,TALENTS,MILESTONES,ACHIEVEMENT_CATEGORIES,ACHIEVEMENT_ART,milestoneStatus,PROJECTS,ENCOUNTERS,
-    makeState,tick,dayKey,weather,action,makeFishEngine,stepFish,settleIdle,talentPoints,migrate,reserve,mergeReward,finishTransfer,restoreTransfer,itemPayload,available,consume,clone,hash};
+    makeState,tick,dayKey,weather,action,makeFishEngine,stepFish,settleIdle,idleMaxHours,idleCapacity,talentPoints,migrate,reserve,mergeReward,finishTransfer,restoreTransfer,itemPayload,available,consume,clone,hash};
   if(typeof window === 'undefined' && typeof module !== 'undefined' && module.exports) { module.exports = Core; return; }
   // 浏览器界面与持久化实现在下方。
   start().catch(error => { console.error('[小农场]',error); });
@@ -738,7 +764,7 @@
       '<div class="wallet"><span>小院币 <b id="coins">—</b></span><span>行动力 <b id="energy">—</b></span></div>' +
       '<div class="header-actions"><div class="panel-zoom" role="group" aria-label="面板缩放"><button data-ui="zoom-out" title="缩小面板" aria-label="缩小面板">−</button><button data-ui="zoom-reset" title="恢复100%" aria-label="恢复面板100%大小">85%</button><button data-ui="zoom-in" title="放大面板" aria-label="放大面板">＋</button></div><button data-ui="theme" title="切换亮暗风格" aria-label="切换亮暗风格">☼</button><button data-ui="close" title="收起小院" aria-label="收起小院">×</button></div></header>' +
       '<div class="workspace"><div class="nav-shell"><button class="nav-arrow" data-ui="nav-prev" aria-label="向左滚动导航">‹</button><nav aria-label="小院功能"></nav><button class="nav-arrow" data-ui="nav-next" aria-label="向右滚动导航">›</button></div><main tabindex="-1"><div class="loading">正在打开小院存档…</div></main></div>' +
-      '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span>v' + VERSION + '</span></footer>' +
+      '<footer><span id="connection">本地经营 · 实体物资可装入角色背包</span><span class="farm-maintenance"><button data-do="reload-latest" title="绕过缓存重新拉取 @main 最新版">重新拉取</button><button data-do="reset-farm" title="清空并重建小农场存档">重置</button><span>v' + VERSION + '</span></span></footer>' +
       '<dialog aria-label="小农场操作"><div class="dialog-head"><h2></h2><button data-ui="dismiss" aria-label="关闭弹窗">×</button></div><div class="dialog-content"></div><p class="dialog-error" role="alert" hidden></p><div class="dialog-actions"></div></dialog></section>' +
       '<div class="toast" role="status" aria-live="polite" hidden></div></div>';
     // Keep the overlay outside body transforms/filters/overflow used by mobile themes.
@@ -988,22 +1014,52 @@
       return !!stop && stop.getClientRects().length > 0 && p.getComputedStyle(stop).visibility !== 'hidden';
     }
     function apiForBackpack() {
-      const api = p.TavernHelper;
-      requireThat(api && typeof api.getVariables === 'function' && typeof api.updateVariablesWith === 'function','酒馆助手背包接口尚未就绪。物资仍在小院中，可稍后重试。');
-      return api;
+      const mvu=p.Mvu||window.Mvu,helper=p.TavernHelper||window.TavernHelper;
+      const hasMvu=typeof mvu?.getMvuData==='function'&&typeof mvu?.replaceMvuData==='function';
+      const hasHelper=typeof helper?.getVariables==='function'&&typeof helper?.updateVariablesWith==='function';
+      requireThat(hasMvu||hasHelper,'MVU与酒馆助手背包接口尚未就绪。物资仍在小院中，可稍后重试。');
+      return {mvu:hasMvu?mvu:null,helper:hasHelper?helper:null};
+    }
+    function readBackpackVariables(messageId) {
+      const api=apiForBackpack(),option={type:'message',message_id:messageId};
+      if(api.mvu) {
+        const variables=api.mvu.getMvuData(option);
+        requireThat(!variables?.then,'MVU背包接口暂未完成初始化');
+        if(obj(variables?.stat_data?.物品))return variables;
+      }
+      if(api.helper) {
+        const variables=api.helper.getVariables(option);
+        requireThat(!variables?.then,'酒馆助手背包接口暂未完成初始化');
+        if(obj(variables?.stat_data?.物品))return variables;
+      }
+      return null;
+    }
+    async function updateBackpackVariables(messageId,updater) {
+      const api=apiForBackpack(),option={type:'message',message_id:messageId};
+      if(api.mvu) {
+        const current=readBackpackVariables(messageId);
+        requireThat(current,'目标楼层的MVU背包已经失效');
+        const next=updater(current);
+        requireThat(!next?.then,'背包更新器不能异步返回');
+        await api.mvu.replaceMvuData(next,option);
+        return next;
+      }
+      return await api.helper.updateVariablesWith(updater,option);
     }
     function targetNow() {
       requireThat(!blockedByGeneration && !blockedByMvu && !stopVisible(),'正文或变量仍在生成，结束后再装入背包');
       requireThat(!(p.Mvu || window.Mvu)?.isDuringExtraAnalysis?.(),'额外模型仍在解析变量，完成后再装箱');
       const context = ctx(), messages = context?.chat;
       requireThat(Array.isArray(messages) && messages.length,'请先打开角色聊天');
-      const messageId = messages.length-1, message = messages[messageId];
-      requireThat(message && !message.is_user && !message.is_system,'请等本轮正文与变量更新完成');
       const chatId = context.getCurrentChatId?.() || context.chatId;
       requireThat(typeof chatId === 'string' && chatId.length,'当前聊天身份尚未就绪');
-      const api = apiForBackpack(), variables = api.getVariables({type:'message',message_id:messageId});
-      requireThat(!variables?.then,'请更新酒馆助手后使用背包转入；本地经营仍可使用');
-      requireThat(obj(variables?.stat_data?.物品),'当前楼层尚未生成背包变量，不会写入旧楼层');
+      let messageId=-1,message=null,variables=null;
+      for(let id=messages.length-1;id>=Math.max(0,messages.length-20);id--) {
+        const candidate=messages[id];
+        if(!candidate||candidate.is_user||candidate.is_system)continue;
+        try {const data=readBackpackVariables(id);if(data){messageId=id;message=candidate;variables=data;break;}} catch {}
+      }
+      requireThat(messageId>=0&&variables,'最近20层中没有可写入的MVU角色背包，请先完成一次正文和变量更新');
       const name = variables.stat_data?.姓名 || context.name1 || '当前角色';
       const scope = String(context.characterId ?? '') + ':' + chatId;
       return {scope,messageId,swipe:message.swipe_id || 0,textHash:hash(message.mes || message.message || ''),label:String(name)+' · '+chatId,variables};
@@ -1015,8 +1071,7 @@
       requireThat(String(context?.characterId ?? '')+':'+chatId===pending.target.scope,'请返回装箱时的原聊天再核对');
       const message=context.chat?.[pending.target.messageId];
       requireThat(message && (message.swipe_id || 0)===pending.target.swipe,'请切回装箱时的原楼层分支再核对');
-      const variables=apiForBackpack().getVariables({type:'message',message_id:pending.target.messageId});
-      requireThat(!variables?.then,'背包接口不支持同步核对');
+      const variables=readBackpackVariables(pending.target.messageId);
       return own(variables?.[RECEIPTS],pending.id);
     }
     function setConnection() {
@@ -1113,6 +1168,29 @@
       try { const text=await transact(fn); if(alive) { render(); if(notify && text) toast(text); } return true; }
       catch(error) { toast(error.message || '存档写入失败',true); return false; }
       finally {busy=false;}
+    }
+    async function resetFarm() {
+      if(busy)return;
+      busy=true;releaseFish();fishPaused=false;liveFish=null;
+      try {
+        const fresh=makeState();fresh.theme=state?.theme==='light'?'light':'dark';tick(fresh);
+        await new Promise((resolve,reject)=>{
+          const tx=db.transaction('state','readwrite');tx.objectStore('state').put({key:stateKey,value:fresh});
+          tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error||new Error('重置存档失败'));tx.onerror=()=>{};
+        });
+        state=fresh;tab='overview';view.plot=0;view.pen=0;view.recipe=RECIPES[0].name;view.bag=null;view.achievement=null;view.achievementFilter='all';view.achievementPage=0;
+        render(false);toast('小农场已重置');
+      } finally {busy=false;}
+    }
+    async function reloadLatest() {
+      if(busy)return;
+      busy=true;toast('正在重新拉取 @main 最新版…');
+      let lastError=null;
+      for(const url of LATEST_SCRIPT_URLS) {
+        try {await import(url+(url.includes('?')?'&':'?')+'farm_reload='+Date.now());return;}
+        catch(error){lastError=error;}
+      }
+      busy=false;throw new Error('重新拉取失败：'+(lastError?.message||'网络不可用'));
     }
     try {
       db=await openDatabase();
@@ -1313,12 +1391,12 @@
       return heading('小院成就册','每一点经营，都值得留下一枚纪念。')+'<div class="achievement-summary"><span><b>'+claimed+'</b> / '+ordered.length+' 已领取</span><span><b>'+ready+'</b> 项奖励待领取</span><small>旧版领奖记录已保留</small></div><div class="achievement-filters" aria-label="成就分类">'+filters.map(([id,name,count])=>'<button data-do="achievement-filter" data-id="'+id+'" class="'+(id===filter?'selected':'')+'" aria-pressed="'+(id===filter)+'">'+name+' <small>'+count+'</small></button>').join('')+'</div><div class="achievement-layout"><section class="achievement-browser"><div class="achievement-grid">'+(cards||'<div class="card"><h3>暂时没有待领奖励</h3><p>继续照料小院，新的成绩会自动记录。</p></div>')+'</div><div class="achievement-pagination">'+button('achievement-page','‹ 上一页','data-index="'+(view.achievementPage-1)+'"',!view.achievementPage)+'<span>'+(view.achievementPage+1)+' / '+pages+' 页</span>'+button('achievement-page','下一页 ›','data-index="'+(view.achievementPage+1)+'"',view.achievementPage>=pages-1)+'</div></section>'+detail+'</div><div class="note">每项奖励只能领取一次，先进入小院仓库；实体物资可到仓库手动装入角色背包。不会自动改动正文变量。</div>';
     }
     function idlePage() {
-      const idle=state.idle,r=idle.lastReport;
-      const intro=heading('离线值守','最长照看8小时，代收上限200份。亲自照料能提高品质与产量。');
+      const idle=state.idle,r=idle.lastReport,hours=idleMaxHours(state),capacity=idleCapacity(state);
+      const intro=heading('离线值守','当前可连续照看'+hours+'小时，代收容量'+capacity+'份；等级和工具箱会继续提高上限。');
       if(!idle.built)return intro+'<section class="card project-card">'+scene(5,'idle-art')+'<h3>搭一个值守岗</h3><p>值守会代收成熟作物、畜牧产物和已完工的加工品。也可以托付补种、喂食及售卖普通余粮。</p><p>建造：Lv.3 · 80 小院币 · 木材6 · 布料3</p>'+button('build-idle','建立值守岗','',state.level<3||state.coins<80||available(state,'木材')<6||available(state,'布料')<3,true)+'</section>';
-      const checks=[['enabled','开启值守','关闭后只保留自然生长，不自动收获'],['autoPlant','代收后续种上一茬','仅续种已有品种；计入每日花费预算'],['autoFeed','定时添一份饲料','每次3币；只收产物，绝不自动出栏'],['sellSurplus','售卖普通余粮','仅普通食物与纤维/木材；保留指定份数，不卖稀有渔获或工具']];
-      return intro+'<section class="card"><div class="section-title"><h3>'+ (idle.enabled?'值守进行中':'值守已暂停')+'</h3></div><div class="idle-settings">'+checks.map(([key,label,desc])=>'<label class="check-row"><input type="checkbox" data-idle="'+key+'" '+(idle[key]?'checked':'')+'><span><b>'+label+'</b><small>'+desc+'</small></span></label>').join('')+'<label class="field">每日花费预算<input id="idle-budget" type="number" min="0" max="1000" value="'+idle.budget+'">币</label><label class="field">每堆至少保留<input id="idle-keep" type="number" min="1" max="100" value="'+idle.keep+'">份</label></div><p>今日已花费 '+idle.spent+' / '+idle.budget+' 币。预算用完或金币不足，会停止补种与喂食，仍可代收。</p>'+button('save-idle','保存值守安排','',false,true)+'</section>'+
-        (r?section('上次回来时','<div class="stats">'+stat('代收作物',r.harvest+' 份')+stat('畜牧产物',r.ranch+' 份')+stat('工坊完成',r.craft+' 件')+'</div><p class="idle-report">照看 '+r.minutes+' 分钟 · 补种 '+r.planted+' 块 · 花费 '+r.spent+' 币 · 售出 '+r.sold+' 份 / 收入 '+r.earned+' 币'+(r.capped?'。超过8小时的部分不重复结算。':'')+(r.full?' 仓库已接近代收上限，先整理一下。':'')+'</p>'):'')+
+      const checks=[['enabled','开启值守','关闭后只保留自然生长，不自动收获'],['autoPlant','自动续种上一茬','成熟代收后继续播种；计入每日预算'],['autoCare','自动精细照料','浇水、除害并照料田地；付费操作计入预算'],['autoFeed','自动喂养与收取','每轮添料并持续收副产物，不自动出栏'],['autoCraft','自动续作原配方','加工完成后，材料足够就继续制作同一配方'],['sellSurplus','售卖普通余粮','仅普通食物与纤维/木材；保留指定份数，不卖稀有渔获或工具']];
+      return intro+'<section class="card"><div class="section-title"><h3>'+ (idle.enabled?'值守进行中':'值守已暂停')+'</h3></div><div class="idle-settings">'+checks.map(([key,label,desc])=>'<label class="check-row"><input type="checkbox" data-idle="'+key+'" '+(idle[key]?'checked':'')+'><span><b>'+label+'</b><small>'+desc+'</small></span></label>').join('')+'<label class="field">每日花费预算<input id="idle-budget" type="number" min="0" max="100000" value="'+idle.budget+'">币</label><label class="field">每堆至少保留<input id="idle-keep" type="number" min="1" max="9999" value="'+idle.keep+'">份</label></div><p>今日已花费 '+idle.spent+' / '+idle.budget+' 币。预算用完或金币不足时仍会免费代收和完成已有加工。</p>'+button('save-idle','保存值守安排','',false,true)+'</section>'+
+        (r?section('上次回来时','<div class="stats">'+stat('代收作物',r.harvest+' 份')+stat('畜牧产物',r.ranch+' 份')+stat('工坊完成',r.craft+' 件')+'</div><p class="idle-report">照看 '+r.minutes+' 分钟 · 补种 '+r.planted+' 块 · 照料 '+(r.cared||0)+' 次 · 续作 '+(r.restarted||0)+' 次 · 花费 '+r.spent+' 币 · 售出 '+r.sold+' 份 / 收入 '+r.earned+' 币'+(r.capped?'。超过'+(r.maxHours||hours)+'小时的部分不重复结算。':'')+(r.full?' 仓库已达到本级值守容量，先整理一下。':'')+'</p>'):'')+
         '<div class="note">值守只处理小院库存，不会自动领取成就、决定探索事件、代替你钓鱼，或向剧情背包写入奖励。设置只在按下保存后生效。</div>';
     }
     function workshopPage() {
@@ -1349,6 +1427,13 @@
     async function handle(btn) {
       if(busy) return;
       const type=btn.dataset.do;
+      if(type==='reload-latest'){await reloadLatest();return;}
+      if(type==='reset-farm') {
+        modal('重置小农场','<p>这会清空小院等级、货币、田地、牲畜、仓库、成就和装箱记录，并建立一份全新存档。</p>'+(state.pending?'<p class="warning">目前还有一箱物资等待核对；重置后该记录也会消失。</p>':''),[['cancel','取消'],['confirm','确认重置',true]],async choice=>{
+          if(choice!=='confirm')return;
+          dismiss();await resetFarm();
+        });return;
+      }
       if(type==='select-plot'||type==='select-pen'){
         view[type==='select-plot'?'plot':'pen']=Number(btn.dataset.index);render();return;
       }
@@ -1418,17 +1503,17 @@
         pending=await transact(s=>reserve(s,id,count,identity));
         requireThat(alive,'小院已关闭');
         const fresh=targetNow();requireThat(sameTarget(pending.target,fresh),'聊天或楼层已变化，物资将留在小院');
-        const api=apiForBackpack();
-        // 使用父页面原生同步 updater：在最后一刻读取变量，只合并物品并同批写入收据。
+        // 在最后一刻读取当前MVU楼层，只合并物品并同批写入收据。
+        // 优先走MVU读写接口以匹配当前ZOD结构，旧版酒馆助手接口作为兼容回退。
         // 不触发 VARIABLE_UPDATE_ENDED；那是正文 MVU 的完成信号，不能伪造。
         await transact(s=>{requireThat(s.pending?.id===pending.id,'装箱状态已变化');s.pending.attempted=true;});
         writeStarted=true;
-        await api.updateVariablesWith(variables=>{
+        await updateBackpackVariables(pending.target.messageId,variables=>{
           const now=targetNow();requireThat(sameTarget(pending.target,now),'写入前聊天状态已变化');
           const merged=mergeReward(variables,pending).variables;
           updaterReturned=true;
           return merged;
-        },{type:'message',message_id:pending.target.messageId});
+        });
         settled=true;
         requireThat(transferReceipt(pending),'写入结果待核对，装箱物资已预留');
         await transact(s=>finishTransfer(s,pending.id));
@@ -1571,7 +1656,7 @@ nav button span{font:10px/1 ui-monospace,monospace;color:var(--muted);opacity:.6
 .nav-arrow{font:24px/1 system-ui;width:28px;height:34px;min-height:34px;padding:0;background:transparent;border-color:transparent}.nav-arrow:disabled{opacity:.2}
 main{flex:1;min-width:0;min-height:0;overflow:auto;overflow-x:hidden;padding:18px;overscroll-behavior:contain;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;touch-action:pan-y}
 main:focus{outline:0}main>*+*{margin-top:14px}
-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 16px;border-top:1px solid var(--line);font-size:10px;color:var(--muted);flex-shrink:0}footer span:first-child{min-width:0;overflow-wrap:anywhere}
+footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 16px;border-top:1px solid var(--line);font-size:10px;color:var(--muted);flex-shrink:0}footer>span:first-child{min-width:0;overflow-wrap:anywhere}.farm-maintenance{display:flex;align-items:center;gap:6px;white-space:nowrap}.farm-maintenance button{border:0;background:transparent;color:var(--muted);font:inherit;padding:2px 3px;cursor:pointer}.farm-maintenance button:hover,.farm-maintenance button:focus-visible{color:var(--accent);text-decoration:underline}
 .eyebrow{font:10px/1.5 ui-monospace,"SFMono-Regular",Consolas,monospace;letter-spacing:.07em;color:var(--accent);text-transform:uppercase}
 .heading{display:flex;align-items:center;justify-content:space-between;gap:14px}.heading p{font-size:12px;margin-top:4px}.heading>button{flex-shrink:0}
 .card,.selection-panel,.field-board{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:13px;min-width:0}

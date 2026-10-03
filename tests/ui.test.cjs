@@ -6,14 +6,19 @@ const {IDBFactory}=require(path.join(deps,'fake-indexeddb'));
 const C=require('../farm.js'),source=fs.readFileSync(path.resolve(__dirname,'../farm.js'),'utf8');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await delay(10);}throw Error('流程未在预期时间内完成');}
-async function setup(t){
+async function setup(t,options={}){
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e));
   const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'http://farm-test.local/',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole:vc});
   const w=dom.window,factory=new IDBFactory();w.indexedDB=factory;w.__GARDEN_PREVIEW__=true;
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
   let vars={stat_data:{物品:{旧物:{emoji:'📦',count:1,quality:'普通',weight:1,condition:90,category:'工具零件',detail:'保持原样'}},核心状态:{hp_current:50}},other:'keep'},mode='ok',chatId='测试聊天',mvu=false;
   const context={chat:[{mes:'模拟正文',swipe_id:0,is_user:false}],characterId:'test',name1:'测试角色',getCurrentChatId:()=>chatId,eventSource:{on(){},removeListener(){}}};
-  w.SillyTavern={getContext:()=>context};w.Mvu={isDuringExtraAnalysis:()=>mvu};
+  w.SillyTavern={getContext:()=>context};let mvuWrites=0;
+  w.Mvu={isDuringExtraAnalysis:()=>mvu};
+  if(options.mvuBackend){
+    w.Mvu.getMvuData=({message_id})=>message_id===0?structuredClone(vars):null;
+    w.Mvu.replaceMvuData=async(next,{message_id})=>{assert.equal(message_id,0);vars=structuredClone(next);mvuWrites++;return structuredClone(vars);};
+  }
   w.TavernHelper={getVariables:()=>structuredClone(vars),updateVariablesWith(fn){if(mode==='fail')throw Error('模拟接口拒绝');vars=fn(structuredClone(vars));if(mode==='after')throw Error('已写入但返回错误');return structuredClone(vars);}};
   w.eval(source);
   await until(()=>w.document.querySelector('#jmzq-garden')?.shadowRoot.querySelector('[data-do="demo-supplies"]'));
@@ -21,7 +26,7 @@ async function setup(t){
   async function read(){return new Promise((resolve,reject)=>{const req=factory.open('ZodFarmDB',1);req.onsuccess=()=>{const db=req.result,r=db.transaction('state','readonly').objectStore('state').get(C.KEY+'_preview');r.onsuccess=()=>{resolve(r.result.value);db.close();};r.onerror=()=>reject(r.error);};req.onerror=()=>reject(req.error);});}
   const click=selector=>{const el=root.querySelector(selector);assert.ok(el,selector);assert.equal(el.disabled,false,selector+' 不该禁用');el.click();};
   t.after(()=>{w._farmCleanup?.();w.close();assert.deepEqual(errors,[]);});
-  return {root,click,read,variables:()=>vars,mode:v=>mode=v,chat:v=>chatId=v,mvu:v=>mvu=v,w};
+  return {root,click,read,variables:()=>vars,mode:v=>mode=v,chat:v=>chatId=v,mvu:v=>mvu=v,context,mvuWrites:()=>mvuWrites,w};
 }
 test('完整装箱流程：取消不扣库存，确认仅转一次，旧变量不变',async t=>{
   const env=await setup(t);env.click('[data-tab="bag"]');const before=await env.read(),count=before.bag[0].count;
@@ -31,6 +36,18 @@ test('完整装箱流程：取消不扣库存，确认仅转一次，旧变量�
   await until(async()=>Object.keys(env.variables()[C.RECEIPTS]||{}).length===1 && !(await env.read()).pending);
   assert.equal((await env.read()).bag[0].count,count-1);assert.equal(env.variables().stat_data.物品.木材.count,1);
   assert.equal(env.variables().stat_data.物品.旧物.count,1);assert.equal(env.variables().stat_data.核心状态.hp_current,50);assert.equal(env.variables().other,'keep');
+});
+test('末楼为用户消息时向前找到最新MVU背包，并优先使用MVU写入',async t=>{
+  const env=await setup(t,{mvuBackend:true});env.context.chat.push({mes:'追加的用户消息',is_user:true,is_system:false});
+  env.click('[data-tab="bag"]');env.click('[data-do="pack"]');await until(()=>env.root.querySelector('dialog').open);env.click('[data-modal="confirm"]');
+  await until(()=>env.variables().stat_data.物品.木材?.count===1);
+  assert.equal(env.mvuWrites(),1);assert.equal((await env.read()).pending,null);
+});
+test('底部提供重置与重新拉取按钮，重置需确认并建立全新存档',async t=>{
+  const env=await setup(t);assert.ok(env.root.querySelector('[data-do="reload-latest"]'));assert.ok(env.root.querySelector('[data-do="reset-farm"]'));
+  env.click('[data-tab="overview"]');env.click('[data-do="demo-supplies"]');await until(async()=>(await env.read()).level===10);
+  env.click('[data-do="reset-farm"]');await until(()=>env.root.querySelector('dialog').open);assert.ok((await env.read()).level===10);
+  env.click('[data-modal="confirm"]');await until(async()=>{const s=await env.read();return s.level===1&&s.coins===180&&s.bag.length===0;});
 });
 
 test('悬浮入口拖动不误打开、位置保存、普通点击仍可打开',async t=>{

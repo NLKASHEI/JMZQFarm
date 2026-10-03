@@ -251,13 +251,21 @@ test('值守补种和喂食遵守每天预算，代收不自动装入剧情背�
   assert.equal(s.pending,null);assert.deepEqual(s.deliveries,[]);
   const saved=C.clone(s);assert.equal(C.settleIdle(s,now+30*60000),null);assert.deepEqual(s,saved);
 });
-test('挂机最多8小时，重复打开和时钟回退不补发',()=>{
+test('中后期挂机最长24小时，重复打开和时钟回退不补发',()=>{
   const s=state();C.action(s,'buy-animal',{name:'鸡',index:0},now);
   Object.assign(s.idle,{built:true,enabled:true,lastAt:now});
-  const r=C.settleIdle(s,now+24*60*60000);assert.equal(r.minutes,480);assert.equal(r.capped,true);
-  const count=C.available(s,'鸡蛋');assert.ok(count<=121);
-  assert.equal(C.settleIdle(s,now+24*60*60000),null);assert.equal(C.settleIdle(s,now),null);
+  const r=C.settleIdle(s,now+48*60*60000);assert.equal(r.minutes,1440);assert.equal(r.maxHours,24);assert.equal(r.capped,true);
+  const count=C.available(s,'鸡蛋');assert.ok(count<=C.idleCapacity(s));
+  assert.equal(C.settleIdle(s,now+48*60*60000),null);assert.equal(C.settleIdle(s,now),null);
   assert.equal(C.available(s,'鸡蛋'),count);
+});
+test('强化值守会自动除害照料并在材料允许时续作原配方',()=>{
+  const s=state({'白菜':8});C.action(s,'plant',{name:'白菜',index:0},now,()=>0);
+  s.plots[0].trouble='杂草';C.action(s,'craft',{name:'蔬菜干'},now);
+  Object.assign(s.idle,{built:true,enabled:true,autoCare:true,autoCraft:true,lastAt:now,budget:1000});
+  const report=C.settleIdle(s,now+20*60000);
+  assert.ok(report.cared>=2);assert.ok(report.craft>=1);assert.ok(report.restarted>=1);
+  assert.ok(!s.plots[0].trouble);assert.ok(C.available(s,'蔬菜干')>=2);
 });
 test('未开启值守不自动处理库存，自动售卖保留份额且不出售稀有鱼与装备',()=>{
   const s=state({'白菜':30,'雨布挎包':20});s.bag.push({id:'rare',name:'鲟鱼',quality:'稀有',weight:3,count:12});
