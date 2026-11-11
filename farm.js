@@ -1,12 +1,12 @@
-/* 缄默之秋 · 小农场 4.4.1
+/* 缄默之秋 · 小农场 4.4.2
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.4.1';
+  const VERSION = '4.4.2';
   // 保留完整字面量，供重新拉取在执行远端脚本前核验版本。
-  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.1';
+  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.2';
   const LATEST_SCRIPT_URLS = [
     'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
     'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@main/farm.min.js',
@@ -742,7 +742,8 @@
     p._farmRelease = RELEASE_MARKER;
     doc.getElementById('jmzq-garden')?.remove();
     let alive = true, busy = false, db, state, tab = 'overview', lastReady = '', interval;
-    let blockedByGeneration = false, blockedByMvu = false;
+    const mvuUpdates = new Map();
+    let connectionTimer;
     let lastFocus = null, dialogCallback = null, fishFrame = 0;
     const subscriptions = [];
     const detailStates = new Map();
@@ -990,6 +991,7 @@
       p.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('resize',resize);p.visualViewport?.removeEventListener('scroll',resize);
       p.removeEventListener('pageshow',floatingPageShow);doc.removeEventListener('visibilitychange',floatingVisibility);
       subscriptions.forEach(([em,name,fn])=>em.removeListener?.(name,fn));
+      clearTimeout(connectionTimer);
       clearTimeout(toast.timer); if(dialog.open) dialog.close(); host.remove();
       if(db) db.close();
       if(p._farmCleanup === cleanup) delete p._farmCleanup;
@@ -1001,16 +1003,28 @@
     p._farmCleanup = window._farmCleanup = cleanup;
     window.addEventListener('pagehide',pageHide);
     const ctx = () => p.SillyTavern?.getContext?.() || window.SillyTavern?.getContext?.();
+    function refreshConnectionSoon() {
+      if(panel.hidden || connectionTimer !== undefined) return;
+      connectionTimer=setTimeout(()=>{connectionTimer=undefined;if(alive&&!panel.hidden)setConnection();},0);
+    }
     function attachEvents() {
       const context = ctx(), emitter = context?.eventSource, types = context?.eventTypes || {};
       if(!emitter?.on || subscriptions.length) return;
       const listen = (name,fn) => { emitter.on(name,fn); subscriptions.push([emitter,name,fn]); };
-      listen(types.GENERATION_STARTED || 'generation_started',()=>{blockedByGeneration=true;});
-      listen(types.GENERATION_ENDED || 'generation_ended',()=>{blockedByGeneration=false;});
-      listen(types.GENERATION_STOPPED || 'generation_stopped',()=>{blockedByGeneration=false;blockedByMvu=false;});
-      listen('mag_variable_update_started',()=>{blockedByMvu=true;});
-      listen('mag_variable_update_ended',()=>{blockedByMvu=false;});
-      listen(types.CHAT_CHANGED || 'chat_id_changed',()=>{blockedByGeneration=false;blockedByMvu=false;});
+      listen(types.GENERATION_ENDED || 'generation_ended',refreshConnectionSoon);
+      listen(types.GENERATION_STOPPED || 'generation_stopped',refreshConnectionSoon);
+      listen('mag_variable_update_started',variables=>{
+        mvuUpdates.set(variables,Date.now());
+        refreshConnectionSoon();
+      });
+      listen('mag_variable_update_ended',variables=>{
+        mvuUpdates.delete(variables);
+        refreshConnectionSoon();
+      });
+      listen(types.CHARACTER_MESSAGE_RENDERED || 'character_message_rendered',refreshConnectionSoon);
+      listen(types.MESSAGE_UPDATED || 'message_updated',refreshConnectionSoon);
+      listen(types.MESSAGE_SWIPED || 'message_swiped',refreshConnectionSoon);
+      listen(types.CHAT_CHANGED || 'chat_id_changed',()=>{mvuUpdates.clear();refreshConnectionSoon();});
     }
     function stopVisible() {
       const stop = doc.querySelector('#mes_stop');
@@ -1050,19 +1064,24 @@
       return await api.helper.updateVariablesWith(updater,option);
     }
     function targetNow() {
-      requireThat(!blockedByGeneration && !blockedByMvu && !stopVisible(),'正文或变量仍在生成，结束后再装入背包');
+      // MVU 解析异常时可能没有结束事件。额外模型仍由它自己的实时状态保护。
+      for(const [variables,started] of mvuUpdates) {
+        if(Date.now()-started>=10000)mvuUpdates.delete(variables);
+      }
+      requireThat(!stopVisible() && !mvuUpdates.size,'正文或变量仍在生成，结束后再装入背包');
       requireThat(!(p.Mvu || window.Mvu)?.isDuringExtraAnalysis?.(),'额外模型仍在解析变量，完成后再装箱');
       const context = ctx(), messages = context?.chat;
       requireThat(Array.isArray(messages) && messages.length,'请先打开角色聊天');
       const chatId = context.getCurrentChatId?.() || context.chatId;
       requireThat(typeof chatId === 'string' && chatId.length,'当前聊天身份尚未就绪');
-      let messageId=-1,message=null,variables=null;
-      for(let id=messages.length-1;id>=Math.max(0,messages.length-20);id--) {
-        const candidate=messages[id];
-        if(!candidate||candidate.is_user||candidate.is_system)continue;
-        try {const data=readBackpackVariables(id);if(data){messageId=id;message=candidate;variables=data;break;}} catch {}
+      let messageId=messages.length-1;
+      for(;messageId>=0;messageId--) {
+        const message=messages[messageId];
+        if(message&&!message.is_user&&!message.is_system)break;
       }
-      requireThat(messageId>=0&&variables,'最近20层中没有可写入的MVU角色背包，请先完成一次正文和变量更新');
+      requireThat(messageId>=0,'请先完成一次正文和变量更新');
+      const message=messages[messageId],variables=readBackpackVariables(messageId);
+      requireThat(variables,'当前楼层的MVU背包尚未就绪，请等变量更新完成后再装箱');
       const name = variables.stat_data?.姓名 || context.name1 || '当前角色';
       const scope = String(context.characterId ?? '') + ':' + chatId;
       return {scope,messageId,swipe:message.swipe_id || 0,textHash:hash(message.mes || message.message || ''),label:String(name)+' · '+chatId,variables};
@@ -1086,7 +1105,7 @@
       const el = $('.toast'); el.textContent = text; el.classList.toggle('error',error); el.hidden = false;
       clearTimeout(toast.timer); toast.timer = setTimeout(()=>{el.hidden=true;},4500);
     }
-    function showPanel() { finishFloating();revealBubble();bubbleHovered=false;panel.hidden = false;bubble.hidden = true;layoutFloating();if(state) {render(false);if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
+    function showPanel() { finishFloating();revealBubble();bubbleHovered=false;panel.hidden = false;bubble.hidden = true;layoutFloating();if(state) {render(false);setConnection();if(state.idle?.enabled)mutate(()=>null,false);} main.focus({preventScroll:true}); }
     function hidePanel() { finishFloating();dismiss();releaseFish();fishPaused=!!liveFish;flushFish();panel.hidden = true;bubble.hidden = false;revealBubble();layoutFloating();bubble.focus({preventScroll:true});scheduleBubbleHide();p.cancelAnimationFrame(fishFrame); }
     function dismiss() { if(dialog.open) dialog.close(); dialogCallback = null; lastFocus?.focus?.({preventScroll:true}); }
     function modal(title,body,buttons,callback) {
@@ -1532,6 +1551,10 @@
         settled=true;
         requireThat(transferReceipt(pending),'写入结果待核对，装箱物资已预留');
         await transact(s=>finishTransfer(s,pending.id));
+        const helper=p.TavernHelper||window.TavernHelper;
+        if(typeof helper?.setChatMessages==='function') {
+          try {await helper.setChatMessages([{message_id:pending.target.messageId}],{refresh:'affected'});} catch {}
+        }
         render();toast('已将 '+pending.name+' ×'+count+' 转入角色背包');setConnection();
       } catch(error) {
         let confirmed=false;

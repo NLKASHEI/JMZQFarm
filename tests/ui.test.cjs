@@ -1,5 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {EventEmitter}=require('node:events');
 const deps=process.env.FARM_TEST_DEPS||path.resolve(__dirname,'../node_modules');
 const {JSDOM,VirtualConsole}=require(path.join(deps,'jsdom'));
 const {IDBFactory}=require(path.join(deps,'fake-indexeddb'));
@@ -12,7 +13,7 @@ async function setup(t,options={}){
   const w=dom.window,factory=new IDBFactory();w.indexedDB=factory;w.__GARDEN_PREVIEW__=true;
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
   let vars={stat_data:{物品:{旧物:{emoji:'📦',count:1,quality:'普通',weight:1,condition:90,category:'工具零件',detail:'保持原样'}},核心状态:{hp_current:50}},other:'keep'},mode='ok',chatId='测试聊天',mvu=false;
-  const context={chat:[{mes:'模拟正文',swipe_id:0,is_user:false}],characterId:'test',name1:'测试角色',getCurrentChatId:()=>chatId,eventSource:{on(){},removeListener(){}}};
+  const context={chat:[{mes:'模拟正文',swipe_id:0,is_user:false}],characterId:'test',name1:'测试角色',getCurrentChatId:()=>chatId,eventSource:new EventEmitter()};
   w.SillyTavern={getContext:()=>context};let mvuWrites=0;
   w.Mvu={isDuringExtraAnalysis:()=>mvu};
   if(options.mvuBackend){
@@ -42,6 +43,44 @@ test('末楼为用户消息时向前找到最新MVU背包，并优先使用MVU�
   env.click('[data-tab="bag"]');env.click('[data-do="pack"]');await until(()=>env.root.querySelector('dialog').open);env.click('[data-modal="confirm"]');
   await until(()=>env.variables().stat_data.物品.木材?.count===1);
   assert.equal(env.mvuWrites(),1);assert.equal((await env.read()).pending,null);
+});
+test('试运行不锁住装箱，新楼库存尚未就绪时不会写到旧楼',async t=>{
+  const env=await setup(t,{mvuBackend:true}),{context,w}=env;
+  const floor0=env.variables();
+  const item=C.itemPayload((await env.read()).bag[0],1);
+  let floor1=null, refreshed;
+  w.Mvu.getMvuData=({message_id})=>structuredClone(message_id===0?floor0:floor1);
+  w.Mvu.replaceMvuData=async(next,{message_id})=>{assert.equal(message_id,1);floor1=structuredClone(next);};
+  w.TavernHelper.getVariables=w.Mvu.getMvuData;
+  w.TavernHelper.setChatMessages=async(messages,options)=>{refreshed={messages,options};};
+  env.click('.bubble');
+  env.click('[data-tab="bag"]');
+  context.eventSource.emit('generation_started','normal',{},true);
+  env.click('[data-do="pack"]');
+  await until(()=>env.root.querySelector('dialog').open);
+  env.click('[data-modal="cancel"]');
+  context.chat.push({mes:'下一楼',swipe_id:0,is_user:false});
+  env.click('[data-do="pack"]');
+  await until(()=>env.root.querySelector('.toast').textContent.includes('当前楼层的MVU背包尚未就绪'));
+  assert.equal(env.root.querySelector('dialog').open,false);
+  const update={};
+  context.eventSource.emit('mag_variable_update_started',update);
+  floor1={stat_data:{物品:{木材:{...item,count:4}}}};
+  await until(()=>env.root.querySelector('#connection').textContent.includes('本地经营'));
+  env.click('[data-do="pack"]');
+  await until(()=>env.root.querySelector('.toast').textContent.includes('仍在生成'));
+  context.eventSource.emit('mag_variable_update_ended',update);
+  context.eventSource.emit('character_message_rendered',1);
+  await until(()=>env.root.querySelector('#connection').textContent.includes('预览模拟背包'));
+  env.click('[data-do="pack"]');
+  await until(()=>env.root.querySelector('dialog').open);
+  floor1.stat_data.物品.木材.count=7;
+  env.click('[data-modal="confirm"]');
+  await until(()=>refreshed);
+  assert.equal(floor1.stat_data.物品.木材.count,8);
+  assert.equal(floor0.stat_data.物品.木材,undefined);
+  assert.equal(refreshed.messages[0].message_id,1);
+  assert.equal(refreshed.options.refresh,'affected');
 });
 test('底部提供重置与重新拉取按钮，重置需确认并建立全新存档',async t=>{
   const env=await setup(t);assert.ok(env.root.querySelector('[data-do="reload-latest"]'));assert.ok(env.root.querySelector('[data-do="reset-farm"]'));
