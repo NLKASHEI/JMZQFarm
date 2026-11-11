@@ -4,5 +4,5 @@ esbuild.build({
   entryPoints:[path.join(__dirname,'..','farm.js')],
   outfile:path.join(__dirname,'..','farm.min.js'),
   minify:true,charset:'utf8',target:'es2020',legalComments:'inline',
-  banner:{js:'/* 缄默之秋小农场 4.4.1 · 修复 @master 拉取与镜像降级 */'},
+  banner:{js:'/* 缄默之秋小农场 4.4.2 · 修复 MVU 库存同步 */'},
 }).catch(error=>{console.error(error);process.exitCode=1;});
