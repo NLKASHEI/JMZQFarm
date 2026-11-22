@@ -137,6 +137,16 @@ test('所有功能页可渲染，值守设置保存前不生效',async t=>{
   env.root.querySelector('[data-idle="enabled"]').checked=true;
   assert.equal((await env.read()).idle.enabled,false);env.click('[data-do="save-idle"]');await until(async()=>(await env.read()).idle.enabled);
   assert.equal((await env.read()).idle.sellSurplus,false);
+  env.root.querySelector('[data-idle="sellSurplus"]').checked=true;
+  env.root.querySelector('#idle-keep').value='0';
+  env.root.querySelector('#idle-sell-scope').value='all';
+  assert.equal((await env.read()).idle.sellSurplus,false);
+  env.click('[data-do="save-idle"]');await until(async()=>(await env.read()).idle.sellSurplus);
+  assert.equal((await env.read()).idle.keep,0);assert.equal((await env.read()).idle.sellScope,'all');
+  env.click('[data-tab="bag"]');env.click('[data-tab="idle"]');
+  assert.equal(env.root.querySelector('#idle-keep').value,'0');
+  assert.equal(env.root.querySelector('#idle-sell-scope').value,'all');
+
 });
 test('成就筛选分页与选中同步，领奖仅入小院；领取后空页不崩溃',async t=>{
   const env=await setup(t);env.click('[data-tab="achievements"]');

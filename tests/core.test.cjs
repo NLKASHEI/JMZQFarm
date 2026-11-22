@@ -273,3 +273,34 @@ test('未开启值守不自动处理库存，自动售卖保留份额且不出�
   Object.assign(s.idle,{built:true,enabled:true,sellSurplus:true,keep:10,lastAt:now});
   C.settleIdle(s,now+60000);assert.equal(C.available(s,'白菜'),10);assert.equal(C.available(s,'雨布挎包'),20);assert.equal(C.available(s,'鲟鱼'),12);
 });
+
+
+test('自动售卖全部范围只卖超额，可保留0且反复结算不重复发钱',()=>{
+  const s=state({'白菜':30,'雨布挎包':20});
+  Object.assign(s.idle,{built:true,enabled:true,lastAt:now});
+  C.action(s,'idle-config',{enabled:true,sellSurplus:true,sellScope:'all',keep:5},now);
+  const before=s.coins;
+  const report=C.settleIdle(s,now+60000);
+  assert.equal(C.available(s,'白菜'),5);assert.equal(C.available(s,'雨布挎包'),5);
+  assert.equal(report.sold,40);assert.equal(s.coins-before,report.earned);
+  assert.equal(C.settleIdle(s,now+60000),null);const coins=s.coins;
+  assert.equal(C.settleIdle(s,now+120000).sold,0);assert.equal(s.coins,coins);
+  C.action(s,'idle-config',{keep:0},now+120000);
+  assert.equal(s.idle.keep,0);
+  assert.equal(C.settleIdle(s,now+180000).sold,10);
+  assert.equal(C.available(s,'白菜'),0);assert.equal(C.available(s,'雨布挎包'),0);
+});
+
+test('最后一分钟收获也立即售卖；关闭开关或恰好达到X均不出售',()=>{
+  const s=state({'白菜':10});
+  Object.assign(s.idle,{built:true,enabled:true,sellSurplus:true,keep:10,lastAt:now});
+  assert.equal(C.settleIdle(s,now+60000).sold,0);
+  C.action(s,'plant',{index:0,name:'白菜'},now+60000);
+  const end=s.plots[0].readyAt;
+  // 仅结算收获成熟所在的一分钟，确保没有后续分钟代为出售。
+  s.idle.lastAt=end-60000;
+  const report=C.settleIdle(s,end);
+  assert.ok(report.harvest>0);assert.ok(report.sold>0);assert.equal(C.available(s,'白菜'),10);
+  C.action(s,'idle-config',{sellSurplus:false,keep:0},end);
+  assert.equal(C.settleIdle(s,end+60000).sold,0);assert.equal(C.available(s,'白菜'),10);
+});

@@ -1,12 +1,12 @@
-/* 缄默之秋 · 小农场 4.4.2
+/* 缄默之秋 · 小农场 4.4.3
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.4.2';
+  const VERSION = '4.4.3';
   // 保留完整字面量，供重新拉取在执行远端脚本前核验版本。
-  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.2';
+  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.3';
   const LATEST_SCRIPT_URLS = [
     'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
     'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
@@ -228,7 +228,8 @@
     s.idle ||= {built:false,enabled:false,lastAt:Date.now(),budget:120,spent:0,day:'',autoPlant:false,autoCare:false,autoFeed:false,autoCraft:false,sellSurplus:false,keep:10,lastReport:null};
     for(const key of ['built','enabled','autoPlant','autoCare','autoFeed','autoCraft','sellSurplus']) s.idle[key]=s.idle[key]===true;
     s.idle.lastAt=number(s.idle.lastAt,Date.now());s.idle.spent=int(s.idle.spent,100000);s.idle.day=String(s.idle.day||'');
-    s.idle.budget=clamp(int(s.idle.budget),0,100000);s.idle.keep=clamp(int(s.idle.keep||10),1,9999);
+    s.idle.budget=clamp(int(s.idle.budget),0,100000);s.idle.keep=clamp(int(s.idle.keep ?? 10),0,9999);
+    s.idle.sellScope=s.idle.sellScope==='all'?'all':'ordinary';
     if(s.fishing && s.fishing.mode!=='stardew') {s.fishing=null;s.energy=Math.min(10+s.upgrades.tools,s.energy+1);}
     return s;
   }
@@ -457,7 +458,8 @@
       requireThat(s.idle.built,'先建成值守岗');
       for(const key of ['enabled','autoPlant','autoCare','autoFeed','autoCraft','sellSurplus']) if(own(arg,key)) s.idle[key]=arg[key]===true;
       if(own(arg,'budget'))s.idle.budget=clamp(int(arg.budget),0,100000);
-      if(own(arg,'keep'))s.idle.keep=clamp(int(arg.keep),1,9999);
+      if(own(arg,'keep'))s.idle.keep=clamp(int(arg.keep),0,9999);
+      if(own(arg,'sellScope'))s.idle.sellScope=arg.sellScope==='all'?'all':'ordinary';
       s.idle.lastAt=now;message=s.idle.enabled?'值守已按当前安排运行':'值守已暂停，作物仍会自然生长';
     } else if(type === 'milestone') {
       const goal=MILESTONES.find(g=>g.id===arg.id);
@@ -565,18 +567,22 @@
     if(!slots)return null;
     const report={at:now,minutes:slots,maxHours:hours,capacity,harvest:0,ranch:0,craft:0,restarted:0,planted:0,cared:0,spent:0,sold:0,earned:0,capped:now-original>hours*60*MINUTE,full:false};
     const oldLog=clone(s.log),rand=()=>((hash(String(idle.lastAt)+':'+s.coins)%1000)/1000);
+    function sellSurplus(moment) {
+      if(!idle.sellSurplus)return;
+      for(const row of [...s.bag]) {
+        const cfg=ITEMS[row.name];
+        if(!(cfg?.price>0) || row.count<=idle.keep)continue;
+        if(idle.sellScope!=='all' && (row.quality!=='普通' || !['食物与水','建筑材料'].includes(cfg.category)))continue;
+        const count=row.count-idle.keep,before=s.coins;
+        action(s,'sell',{id:row.id,count},moment);report.earned+=s.coins-before;report.sold+=count;
+      }
+    }
     for(let k=1;k<=slots;k++) {
       const moment=start+k*MINUTE,day=dayKey(moment);
       if(day>idle.day){idle.day=day;idle.spent=0;}
       const canSpend=n=>idle.spent+n<=idle.budget && s.coins>=n;
       const charge=n=>{idle.spent+=n;report.spent+=n;};
-      if(idle.sellSurplus) {
-        for(const row of [...s.bag]) {
-          const cfg=ITEMS[row.name];
-          if(row.quality!=='普通' || !cfg?.price || !['食物与水','建筑材料'].includes(cfg.category) || row.count<=idle.keep)continue;
-          const count=row.count-idle.keep,before=s.coins;action(s,'sell',{id:row.id,count},moment);report.earned+=s.coins-before;report.sold+=count;
-        }
-      }
+      sellSurplus(moment);
       for(let i=0;i<s.plots.length;i++) {
         const full=inventoryCount(s)>=capacity;if(full){report.full=true;break;}
         let plot=s.plots[i];
@@ -606,11 +612,12 @@
           action(s,'craft',{name:recipe.name},moment);report.restarted++;
         }
       }
+      sellSurplus(moment);
       idle.lastAt=moment;
     }
     // 挂机批次合并成一条手记，避免每分钟刷日志。没有自动探索、钓鱼、出栏或外送。
     s.log=oldLog;if(report.harvest||report.ranch||report.craft||report.restarted||report.planted||report.cared||report.sold||!idle.lastReport)idle.lastReport=report;tick(s,now);
-    if(report.harvest||report.ranch||report.craft||report.planted||report.cared||report.sold)log(s,'值守 '+slots+' 分钟：代收作物 '+report.harvest+'、畜牧 '+report.ranch+'、工坊 '+report.craft+'，续作 '+report.restarted+' 次，补种 '+report.planted+' 块，照料 '+report.cared+' 次，花费 '+report.spent+' 币。',now);
+    if(report.harvest||report.ranch||report.craft||report.planted||report.cared||report.sold)log(s,'值守 '+slots+' 分钟：代收作物 '+report.harvest+'、畜牧 '+report.ranch+'、工坊 '+report.craft+'，续作 '+report.restarted+' 次，补种 '+report.planted+' 块，照料 '+report.cared+' 次，花费 '+report.spent+' 币，售出 '+report.sold+' 份、收入 '+report.earned+' 币。',now);
     return report;
   }
   function migrate(legacy,now = Date.now()) {
@@ -1428,8 +1435,8 @@
       const idle=state.idle,r=idle.lastReport,hours=idleMaxHours(state),capacity=idleCapacity(state);
       const intro=heading('离线值守','当前可连续照看'+hours+'小时，代收容量'+capacity+'份；等级和工具箱会继续提高上限。');
       if(!idle.built)return intro+'<section class="card project-card">'+scene(5,'idle-art')+'<h3>搭一个值守岗</h3><p>值守会代收成熟作物、畜牧产物和已完工的加工品。也可以托付补种、喂食及售卖普通余粮。</p><p>建造：Lv.3 · 80 小院币 · 木材6 · 布料3</p>'+button('build-idle','建立值守岗','',state.level<3||state.coins<80||available(state,'木材')<6||available(state,'布料')<3,true)+'</section>';
-      const checks=[['enabled','开启值守','关闭后只保留自然生长，不自动收获'],['autoPlant','自动续种上一茬','成熟代收后继续播种；计入每日预算'],['autoCare','自动精细照料','浇水、除害并照料田地；付费操作计入预算'],['autoFeed','自动喂养与收取','每轮添料并持续收副产物，不自动出栏'],['autoCraft','自动续作原配方','加工完成后，材料足够就继续制作同一配方'],['sellSurplus','售卖普通余粮','仅普通食物与纤维/木材；保留指定份数，不卖稀有渔获或工具']];
-      return intro+'<section class="card"><div class="section-title"><h3>'+ (idle.enabled?'值守进行中':'值守已暂停')+'</h3></div><div class="idle-settings">'+checks.map(([key,label,desc])=>'<label class="check-row"><input type="checkbox" data-idle="'+key+'" '+(idle[key]?'checked':'')+'><span><b>'+label+'</b><small>'+desc+'</small></span></label>').join('')+'<label class="field">每日花费预算<input id="idle-budget" type="number" min="0" max="100000" value="'+idle.budget+'">币</label><label class="field">每堆至少保留<input id="idle-keep" type="number" min="1" max="9999" value="'+idle.keep+'">份</label></div><p>今日已花费 '+idle.spent+' / '+idle.budget+' 币。预算用完或金币不足时仍会免费代收和完成已有加工。</p>'+button('save-idle','保存值守安排','',false,true)+'</section>'+
+      const checks=[['enabled','开启值守','关闭后只保留自然生长，不自动收获'],['autoPlant','自动续种上一茬','成熟代收后继续播种；计入每日预算'],['autoCare','自动精细照料','浇水、除害并照料田地；付费操作计入预算'],['autoFeed','自动喂养与收取','每轮添料并持续收副产物，不自动出栏'],['autoCraft','自动续作原配方','加工完成后，材料足够就继续制作同一配方'],['sellSurplus','自动售卖超额库存','每堆超过保留数量 X 时，只卖超出的部分，收入小院币']];
+      return intro+'<section class="card"><div class="section-title"><h3>'+ (idle.enabled?'值守进行中':'值守已暂停')+'</h3></div><div class="idle-settings">'+checks.map(([key,label,desc])=>'<label class="check-row"><input type="checkbox" data-idle="'+key+'" '+(idle[key]?'checked':'')+'><span><b>'+label+'</b><small>'+desc+'</small></span></label>').join('')+'<label class="field">每日花费预算<input id="idle-budget" type="number" min="0" max="100000" value="'+idle.budget+'">币</label><label class="field">售卖范围<select id="idle-sell-scope"><option value="ordinary" '+(idle.sellScope==='ordinary'?'selected':'')+'>普通余粮</option><option value="all" '+(idle.sellScope==='all'?'selected':'')+'>全部可售物品</option></select></label><label class="field">每堆保留数量 X<input id="idle-keep" type="number" min="0" max="9999" value="'+idle.keep+'">份</label></div><p>普通余粮仅售普通品质的食物与建筑材料；全部可售物品还包括渔获、加工品和工具。X=0 表示售完所选范围内的库存。</p><p>今日已花费 '+idle.spent+' / '+idle.budget+' 币。预算用完或金币不足时仍会免费代收和完成已有加工。</p>'+button('save-idle','保存值守安排','',false,true)+'</section>'+
         (r?section('上次回来时','<div class="stats">'+stat('代收作物',r.harvest+' 份')+stat('畜牧产物',r.ranch+' 份')+stat('工坊完成',r.craft+' 件')+'</div><p class="idle-report">照看 '+r.minutes+' 分钟 · 补种 '+r.planted+' 块 · 照料 '+(r.cared||0)+' 次 · 续作 '+(r.restarted||0)+' 次 · 花费 '+r.spent+' 币 · 售出 '+r.sold+' 份 / 收入 '+r.earned+' 币'+(r.capped?'。超过'+(r.maxHours||hours)+'小时的部分不重复结算。':'')+(r.full?' 仓库已达到本级值守容量，先整理一下。':'')+'</p>'):'')+
         '<div class="note">值守只处理小院库存，不会自动领取成就、决定探索事件、代替你钓鱼，或向剧情背包写入奖励。设置只在按下保存后生效。</div>';
     }
@@ -1482,7 +1489,7 @@
         if(await mutate(s=>action(s,type,{owner:sessionOwner}))) {fishPaused=false;liveFish=clone(state.fishing);render(false);}return;
       }
       if(type==='save-idle') {
-        const config={budget:Number($('#idle-budget').value),keep:Number($('#idle-keep').value)};
+        const config={budget:Number($('#idle-budget').value),keep:Number($('#idle-keep').value),sellScope:$('#idle-sell-scope').value};
         root.querySelectorAll('[data-idle]').forEach(x=>config[x.dataset.idle]=x.checked);
         await mutate(s=>action(s,'idle-config',config));return;
       }
