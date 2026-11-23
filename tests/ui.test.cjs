@@ -266,3 +266,39 @@ test('使用校准后图集，鸡所在第三行不按旧256等分取样；图�
   img.dispatchEvent(new env.w.Event('error'));assert.match(img.src,/raw\.githubusercontent/);
   img.dispatchEvent(new env.w.Event('error'));assert.equal(img.hidden,true);assert.ok(chicken.classList.contains('asset-missing'));
 });
+
+test('仓库批量出售可全选、分别填写数量并一次结算',async t=>{
+  const env=await setup(t);
+  env.click('[data-do="demo-supplies"]');
+  await until(async()=>(await env.read()).level===10);
+  env.click('[data-tab="bag"]');
+  const before=await env.read();
+  env.click('[data-do="sell-batch-dialog"]');
+  const form=env.root.querySelector('.batch-sale');
+  const checks=[...form.querySelectorAll('[data-sale-check]')];
+  const quantities=[...form.querySelectorAll('[data-sale-count]')];
+  const confirm=env.root.querySelector('[data-modal="confirm"]');
+  assert.ok(confirm.disabled);
+  form.querySelector('[data-sale-all]').click();
+  assert.ok(checks.every(check=>check.checked));
+  form.querySelector('[data-sale-all]').click();
+  assert.ok(checks.every(check=>!check.checked));
+  checks[0].click();checks[1].click();
+  quantities[0].value='2';quantities[1].value='0';
+  quantities[1].dispatchEvent(new env.w.Event('input',{bubbles:true}));
+  assert.ok(confirm.disabled);
+  quantities[1].value='3';
+  quantities[1].dispatchEvent(new env.w.Event('input',{bubbles:true}));
+  const sellable=before.bag.filter(stack=>C.ITEMS[stack.name]?.price>0);
+  const expected=C.ITEMS[sellable[0].name].price*2+C.ITEMS[sellable[1].name].price*3;
+  assert.ok(form.querySelector('[data-sale-total]').textContent.includes(expected+' 小院币'));
+  confirm.click();
+  await until(()=>!env.root.querySelector('dialog').open);
+  const after=await env.read();
+  const remaining=new Map(after.bag.map(stack=>[stack.id,stack.count]));
+  for(const stack of before.bag) {
+    const sold=stack.id===sellable[0].id?2:stack.id===sellable[1].id?3:0;
+    assert.equal(remaining.get(stack.id)??0,stack.count-sold);
+  }
+  assert.equal(after.coins-before.coins,expected);
+});

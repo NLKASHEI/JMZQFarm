@@ -304,3 +304,13 @@ test('最后一分钟收获也立即售卖；关闭开关或恰好达到X均不�
   C.action(s,'idle-config',{sellSurplus:false,keep:0},end);
   assert.equal(C.settleIdle(s,end+60000).sold,0);assert.equal(C.available(s,'白菜'),10);
 });
+
+test('批量出售有一项库存不足时整批不扣库存、不加币',()=>{
+  const s=state({'白菜':10,'木材':5});
+  const before=JSON.stringify(s.bag), coins=s.coins;
+  assert.throws(()=>C.action(s,'sell-batch',{sales:s.bag.map((stack,index)=>({
+    id:stack.id,count:index===0?1:stack.count+1
+  }))},now),/库存已变化/);
+  assert.equal(JSON.stringify(s.bag),before);
+  assert.equal(s.coins,coins);
+});
