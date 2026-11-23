@@ -1,12 +1,12 @@
-/* 缄默之秋 · 小农场 4.4.3
+/* 缄默之秋 · 小农场 4.4.4
  * 单文件酒馆助手脚本。旧 IndexedDB 键只读迁移；正文与导演时序不参与小游戏结算。
  * 逻辑层可在 Node 中独立载入，界面使用 Shadow DOM 隔离宿主样式。
  */
 (function () {
   'use strict';
-  const VERSION = '4.4.3';
+  const VERSION = '4.4.4';
   // 保留完整字面量，供重新拉取在执行远端脚本前核验版本。
-  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.3';
+  const RELEASE_MARKER = 'JMZQ_FARM_RELEASE:4.4.4';
   const LATEST_SCRIPT_URLS = [
     'https://cdn.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
     'https://testingcf.jsdelivr.net/gh/NLKASHEI/JMZQFarm@master/farm.min.js',
@@ -317,6 +317,9 @@
     requireThat(s.energy >= energy,'行动力不足，稍作休息再来');
     s.coins -= coins; s.energy -= energy;
   }
+  function salePrice(stack,count) {
+    return Math.floor(ITEMS[stack.name].price * count * (stack.quality === '精良' ? 1.2 : 1));
+  }
   function action(s,type,arg = {},now = Date.now(),roll = Math.random) {
     tick(s,now);
     let message = '';
@@ -427,13 +430,27 @@
       if(stack.name === '探索急救包') { requireThat(s.energy < 10+s.upgrades.tools,'行动力已充满'); s.energy = Math.min(10+s.upgrades.tools,s.energy+4); }
       else s.buffs[buff] += 3;
       stack.count--; s.bag = s.bag.filter(x=>x.count>0); message = '已使用' + stack.name;
-    } else if(type === 'sell') {
-      const stack = s.bag.find(x=>x.id === arg.id), count = int(arg.count);
-      requireThat(stack && count && count <= stack.count,'出售数量无效');
-      requireThat(ITEMS[stack.name]?.price > 0,'这件物品暂时不能出售');
-      const price = Math.floor(ITEMS[stack.name].price * count * (stack.quality === '精良' ? 1.2 : 1));
-      stack.count -= count; s.bag = s.bag.filter(x=>x.count>0); s.coins += price;
-      message = '出售获得 ' + price + ' 小院币';
+    } else if(type === 'sell' || type === 'sell-batch') {
+      const sales=type==='sell'?[{id:arg.id,count:int(arg.count)}]:arg.sales;
+      requireThat(Array.isArray(sales) && sales.length>0,'请至少选择一项物资');
+      const seen=new Set();
+      const lines=sales.map(({id,count})=>{
+        const stack=s.bag.find(item=>item.id===id);
+        requireThat(!seen.has(id) && stack && Number.isSafeInteger(count) && count>0 && count<=stack.count,
+          '出售数量无效或库存已变化，请重新选择');
+        requireThat(ITEMS[stack.name]?.price>0,'这件物品暂时不能出售');
+        seen.add(id);
+        return {stack,count,price:salePrice(stack,count)};
+      });
+      let total=0, units=0;
+      for(const {stack,count,price} of lines) {
+        stack.count-=count;
+        total+=price;
+        units+=count;
+      }
+      s.bag=s.bag.filter(stack=>stack.count>0);
+      s.coins+=total;
+      message=type==='sell'?'出售获得 '+total+' 小院币':'已出售 '+lines.length+' 堆共 '+units+' 份，获得 '+total+' 小院币';
     } else if(type === 'order') {
       const order = s.orders.find(x=>x.id === arg.id);
       requireThat(order && !order.done,'这项交付已经完成');
@@ -1462,8 +1479,50 @@
         (cfg?.transferable?button('pack','装入角色背包','data-id="'+stack.id+'"',!!pending,true):cfg&&!cfg.transferable?button('use','在小院使用','data-id="'+stack.id+'"',false,true):'')+
         (cfg?.price?button('sell-dialog','出售','data-id="'+stack.id+'"'):'')+'</div><small>先选择数量，再确认。未选中的物资不会变动。</small></section>':'';
       return heading('仓库','点选物资后装箱或出售。实体奖励可转入当前角色背包。')+pendingHtml+
+        (state.bag.some(item=>ITEMS[item.name]?.price>0)?'<div class="actions batch-sale-entry">'+button('sell-batch-dialog','批量出售')+'</div>':'')+
         (stack?'<div class="management-layout inventory-layout"><section class="stock-grid" aria-label="小院库存">'+tiles+'</section>'+detail+'</div>':'<section class="card empty"><h3>仓库还空着</h3><p>去种一畦菜，或试着抛出第一竿。</p>'+button('go-farm','去田地','',false,true)+'</section>')+
         '<details class="card" data-detail="deliveries"><summary>装箱记录 <small>'+state.deliveries.length+' 笔</small></summary><div class="journal">'+state.deliveries.map(x=>'<p><time>'+new Date(x.at).toLocaleDateString('zh-CN')+'</time><span>'+e(x.name)+' ×'+x.count+' → '+e(x.target)+'</span></p>').join('')+'</div></details>';
+    }
+    function openBatchSale() {
+      const stacks=state.bag.filter(stack=>ITEMS[stack.name]?.price>0);
+      requireThat(stacks.length,'仓库没有可售物资');
+      const rows=stacks.map(stack=>'<div class="batch-sale-row"><label class="check-row"><input type="checkbox" data-sale-check><span><b>'+e(stack.name)+'</b><small>'+e(stack.quality)+' · 库存 '+stack.count+' 份</small></span></label><label class="field">数量<input type="number" data-sale-count inputmode="numeric" min="1" max="'+stack.count+'" step="1" value="1" disabled aria-label="'+e(stack.name)+'出售数量"></label></div>').join('');
+      modal('批量出售','<div class="batch-sale"><label class="check-row"><input type="checkbox" data-sale-all><span>全选可售物资</span></label>'+rows+'<p data-sale-total aria-live="polite"></p></div>',
+        [['cancel','取消'],['confirm','确认出售',true]],async()=>{
+          const {sales,invalid}=readSelection();
+          requireThat(sales.length && !invalid,'请勾选物资并填入有效的整数数量');
+          if(await mutate(s=>action(s,'sell-batch',{sales})))dismiss();
+        });
+      const form=$('.batch-sale'), selectAll=form.querySelector('[data-sale-all]');
+      const summary=form.querySelector('[data-sale-total]'), confirm=$('[data-modal="confirm"]');
+      const fields=[...form.querySelectorAll('.batch-sale-row')].map((row,index)=>({
+        stack:stacks[index], checkbox:row.querySelector('[data-sale-check]'), quantity:row.querySelector('[data-sale-count]')
+      }));
+      function readSelection() {
+        const sales=[];
+        let invalid=false, total=0;
+        for(const {stack,checkbox,quantity} of fields) {
+          if(!checkbox.checked)continue;
+          const count=Number(quantity.value);
+          sales.push({id:stack.id,count});
+          if(!Number.isSafeInteger(count) || count<1 || count>stack.count)invalid=true;
+          else total+=salePrice(stack,count);
+        }
+        return {sales,invalid,total};
+      }
+      function updateSummary() {
+        for(const {checkbox,quantity} of fields)quantity.disabled=!checkbox.checked;
+        const {sales,invalid,total}=readSelection();
+        selectAll.checked=sales.length===fields.length;
+        selectAll.indeterminate=sales.length>0 && !selectAll.checked;
+        confirm.disabled=!sales.length || invalid;
+        summary.textContent=invalid?'请填写库存范围内的整数数量':'已选 '+sales.length+' 堆 · 预计收入 '+total+' 小院币';
+      }
+      form.addEventListener('input',event=>{
+        if(event.target===selectAll)for(const {checkbox} of fields)checkbox.checked=selectAll.checked;
+        updateSummary();
+      });
+      updateSummary();
     }
     async function handle(btn) {
       if(busy) return;
@@ -1519,6 +1578,7 @@
         const index=Number(btn.dataset.index), pen=state.pens[index];
         modal('确认出栏','<p>将这只'+e(pen.name)+'转为肉类物资，围栏会空出来。此操作不能撤销。</p>',[['cancel','继续饲养'],['confirm','确认出栏',true]],async()=>{if(await mutate(s=>action(s,'slaughter',{index})))dismiss();});return;
       }
+      if(type==='sell-batch-dialog'){openBatchSale();return;}
       if(type==='pack' || type==='sell-dialog') {
         const stack=state.bag.find(x=>x.id===btn.dataset.id);
         requireThat(stack,'库存已变化，请重新选择');
@@ -1767,6 +1827,7 @@ footer{display:flex;justify-content:space-between;align-items:center;gap:12px;pa
 .recipe-option{display:flex;align-items:center;gap:9px;text-align:left;min-width:0;padding:8px}.recipe-option>span:not(.sprite):not(.item-symbol){flex:1;min-width:0}.recipe-option b{display:block;font-size:12px;overflow-wrap:anywhere}.recipe-option small{display:block;font-size:10px}.recipe-option .sprite,.recipe-option .item-symbol{width:34px;height:34px;font-size:21px}.recipe-detail>.ingredients{margin:13px 0}
 .ingredients{display:flex;flex-wrap:wrap;gap:5px}.ingredients span{font-size:11px;padding:3px 6px;border:1px dashed var(--line);border-radius:4px;color:var(--muted)}.ingredients .enough{border-style:solid;border-color:var(--accent);color:var(--accent)}
 .job-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.job-strip .task{border:0}
+.batch-sale-entry{margin-bottom:10px}.batch-sale-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;border-bottom:1px solid var(--line)}.batch-sale-row .check-row{border:0}.batch-sale-row .field{gap:6px}.batch-sale-row input[type=number]{width:70px}.batch-sale [data-sale-total]{margin-top:12px;color:var(--accent)}
 .stock-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px}.stock-tile{position:relative;display:flex;align-items:center;flex-direction:column;gap:5px;min-width:0;padding:17px 5px 7px;background:var(--panel)}.stock-tile .sprite{width:45px;height:45px}.stock-tile b{font-size:12px;overflow-wrap:anywhere}.stock-tile small{font-size:10px}.stock-count{position:absolute;top:3px;right:5px;font:10px/1.3 ui-monospace,monospace;color:var(--accent)}.stock-detail .actions{flex-direction:column}.quantity{font-size:13px;color:var(--accent)}
 .project-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px}.project-card p{font-size:12px}.idle-art{width:100%;max-height:155px}.milestone-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}.milestone{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:7px;padding:11px}.milestone p{font-size:11px;margin-top:6px}.milestone .row{align-items:start}.milestone small{font-size:10px;margin-bottom:8px}.milestone button{margin-top:auto;min-height:30px;font-size:11px}
 .idle-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.check-row{display:flex;align-items:start;gap:10px;padding:12px 0;cursor:pointer;border-bottom:1px solid var(--line)}.check-row span{min-width:0}.check-row b{font-size:13px}.check-row small{display:block;font-size:11px;margin-top:3px}.check-row input{width:17px;height:17px;flex-shrink:0;margin:2px 0;accent-color:var(--accent)}.idle-settings input[type=number]{width:76px;padding:7px}.idle-settings .field{gap:8px;font-size:12px;flex-wrap:wrap}.idle-settings~p{font-size:12px}.idle-settings~button{margin-top:12px}.idle-report{font-size:12px;margin-top:10px}
